@@ -23,6 +23,7 @@ type routeLine struct {
 	path    string // as written, ~-prefixed or absolute
 	profile string
 	expires string // YYYY-MM-DD or ""
+	bad     string // why the row could not be read; it is kept as written and ignored
 }
 
 func (l routeLine) isRoute() bool { return l.path != "" }
@@ -52,25 +53,39 @@ func readRoutes() ([]routeLine, error) {
 	}
 	var lines []routeLine
 	for i, raw := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
-		t := strings.TrimSpace(raw)
-		if t == "" || strings.HasPrefix(t, "#") {
-			lines = append(lines, routeLine{raw: raw})
-			continue
-		}
-		f := strings.Fields(t)
-		if len(f) < 2 || len(f) > 3 {
-			return nil, fmt.Errorf("%s:%d: want `<path> <profile> [YYYY-MM-DD]`, got %q", routesPath(), i+1, raw)
-		}
-		l := routeLine{raw: raw, path: f[0], profile: f[1]}
-		if len(f) == 3 {
-			if _, err := time.Parse("2006-01-02", f[2]); err != nil {
-				return nil, fmt.Errorf("%s:%d: %q is not a YYYY-MM-DD date", routesPath(), i+1, f[2])
-			}
-			l.expires = f[2]
-		}
-		lines = append(lines, l)
+		lines = append(lines, parseRouteLine(raw, i+1))
 	}
 	return lines, nil
+}
+
+// parseRouteLine reads a row from its right end — an optional date, then the
+// profile — so everything left of them is the path, spaces included. A row
+// it cannot read keeps its text and carries the reason in bad.
+func parseRouteLine(raw string, n int) routeLine {
+	t := strings.TrimSpace(raw)
+	if t == "" || strings.HasPrefix(t, "#") {
+		return routeLine{raw: raw}
+	}
+	l := routeLine{raw: raw}
+	rest, last := cutLast(t)
+	if _, err := time.Parse("2006-01-02", last); err == nil {
+		l.expires = last
+		rest, last = cutLast(rest)
+	}
+	l.profile, l.path = last, rest
+	if l.path == "" {
+		return routeLine{raw: raw, bad: fmt.Sprintf("line %d: want `<path> <profile> [YYYY-MM-DD]`, got %q", n, raw)}
+	}
+	return l
+}
+
+// cutLast splits s at its last run of whitespace.
+func cutLast(s string) (rest, last string) {
+	i := strings.LastIndexAny(s, " \t")
+	if i < 0 {
+		return "", s
+	}
+	return strings.TrimRight(s[:i], " \t"), s[i+1:]
 }
 
 func writeRoutes(lines []routeLine) error {
@@ -178,9 +193,6 @@ func normalizeRoutePath(p string) (string, error) {
 	abs, err := filepath.Abs(expand(p))
 	if err != nil {
 		return "", err
-	}
-	if strings.ContainsAny(abs, " \t") {
-		return "", fmt.Errorf("%s contains whitespace; the routes file is whitespace-separated and cannot store it", abs)
 	}
 	return tilde(abs), nil
 }

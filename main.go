@@ -237,6 +237,9 @@ func routeList(cfg *Config) int {
 	fmt.Printf("Routes (%s):\n", tilde(routesPath()))
 	any := false
 	for _, l := range lines {
+		if l.bad != "" {
+			fmt.Printf("  [IGNORED — unreadable] %s\n", l.bad)
+		}
 		if !l.isRoute() {
 			continue
 		}
@@ -407,6 +410,9 @@ func cmdDoctor(cfg *Config) int {
 		note(false, "%v", err)
 	}
 	for _, l := range lines {
+		if l.bad != "" {
+			note(false, "%s; the row is ignored", l.bad)
+		}
 		if l.isRoute() {
 			if _, ok := cfg.Profiles[l.profile]; !ok {
 				note(false, "%s names profile %q, which config.toml does not define; the row is ignored", l.path, l.profile)

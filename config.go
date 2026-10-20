@@ -124,6 +124,9 @@ func loadConfig() (*Config, error) {
 		cfg.Tools[name] = t
 	}
 	for prof, homes := range raw.Profiles {
+		if prof == "" || strings.ContainsAny(prof, " \t") {
+			problems = append(problems, fmt.Sprintf("[profiles.%q] needs a name without spaces; routes rows are read by whitespace", prof))
+		}
 		cfg.Profiles[prof] = map[string]string{}
 		for tool, h := range homes {
 			t, ok := cfg.Tools[tool]

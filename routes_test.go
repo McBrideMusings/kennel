@@ -49,12 +49,14 @@ func TestResolve(t *testing.T) {
 	}
 }
 
-// The routes file is hand-edited, so a rewrite keeps comments and blank lines
-// in place and drops only the rows it means to.
-func TestRoutesRewriteKeepsComments(t *testing.T) {
+// The routes file is hand-edited and read on every cd, so a rewrite keeps
+// comments, spaced paths and unreadable rows exactly as written, drops only
+// the rows it means to, and an unreadable row never stops the others routing.
+func TestRoutesFileRoundTrip(t *testing.T) {
 	t.Setenv("AGENTHOME_CONFIG_DIR", t.TempDir())
-	t.Setenv("HOME", t.TempDir())
-	in := "# mine\n\n~/Work work\n  # indented note\n~/old personal 2000-01-01\n~/x personal 2999-12-31\n"
+	h := t.TempDir()
+	t.Setenv("HOME", h)
+	in := "# mine\n\n~/Work work\n  # indented note\n~/old personal 2000-01-01\n~/my  docs personal 2999-12-31\nlonely\n"
 	os.WriteFile(routesPath(), []byte(in), 0o644)
 
 	dropped, err := dropExpired()
@@ -62,8 +64,16 @@ func TestRoutesRewriteKeepsComments(t *testing.T) {
 		t.Fatalf("dropExpired = %v, %v", dropped, err)
 	}
 	got, _ := os.ReadFile(routesPath())
-	want := "# mine\n\n~/Work work\n  # indented note\n~/x personal 2999-12-31\n"
+	want := "# mine\n\n~/Work work\n  # indented note\n~/my  docs personal 2999-12-31\nlonely\n"
 	if string(got) != want {
 		t.Errorf("routes after prune:\n%s\nwant:\n%s", got, want)
+	}
+
+	lines, _ := readRoutes()
+	cfg := &Config{Profiles: map[string]map[string]string{"work": {}, "personal": {}}}
+	spaced := filepath.Join(h, "my  docs", "sub")
+	os.MkdirAll(spaced, 0o755)
+	if p := resolve(cfg, lines, spaced); p != "personal" {
+		t.Errorf("resolve(~/my  docs/sub) = %q, want personal", p)
 	}
 }
