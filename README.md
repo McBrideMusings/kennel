@@ -51,6 +51,35 @@ codex  = "~/.codex-work"
   are edited once. Everything not shared stays per profile: the login and the account's
   own state.
 
+## Shares
+
+An optional `[shares]` table links one tool's files into another tool's home. Nothing is
+shared until you add an entry; with none, every `share` command does nothing.
+
+```toml
+[shares.instructions]          # a file share: one real file, linked from each path
+source = "~/.claude/AGENTS.md"
+links  = ["~/.codex/AGENTS.md", "~/.pi/agent/AGENTS.md"]
+
+[shares.skills]                # a folder share: one link per named item
+source = "~/.claude/skills"
+into   = "~/.agents/skills"
+items  = ["diagnose", "research"]
+```
+
+A share has `source` and either `links` or `into` and `items`, never both. Each item is one
+name with no `/`.
+
+| Command | Does |
+| --- | --- |
+| `agenthome share plan` | prints every share link as ok, missing, wrong, blocked or no source; changes nothing |
+| `agenthome share apply` | creates each missing link and any parent directory; exits 1 if a link needs a hand fix |
+| `agenthome share undo` | removes only symlinks that point at a configured share's source |
+
+Like `link`, `share apply` never moves or deletes a file: a real file or directory where a
+link goes is reported as blocked and left alone. Profile homes need nothing extra, since
+`~/.codex-work/AGENTS.md` links to `~/.codex/AGENTS.md`, which follows the share.
+
 ## Routes
 
 `~/.config/agenthome/routes`, one `<path> <profile> [YYYY-MM-DD]` per line:
@@ -77,7 +106,7 @@ agenthome route list
 | --- | --- |
 | `agenthome which [dir]` | the profile a directory gets and each tool's home |
 | `agenthome homes <tool>` | each profile's home for one tool, tab-separated, for scripts |
-| `agenthome doctor` | config, every shared symlink, ignored routes, and whether this shell's variables match the route for `$PWD`; exits 1 on any problem |
+| `agenthome doctor` | config, every shared symlink, every share link, ignored routes, and whether this shell's variables match the route for `$PWD`; exits 1 on any problem |
 
 Every change agenthome makes on disk (route edits, expiry drops, homes and links it
 creates) is logged with a timestamp to `~/.local/state/agenthome/agenthome.log`.

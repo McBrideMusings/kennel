@@ -27,8 +27,19 @@ type Tool struct {
 	Shared    []string
 }
 
+// Share links one tool's files into another tool's home. A file share has
+// Links; a folder share has Into and Items.
+type Share struct {
+	Name   string
+	Source string
+	Links  []string
+	Into   string
+	Items  []string
+}
+
 type Config struct {
 	Path     string
+	Shares   map[string]*Share
 	Tools    map[string]*Tool
 	Profiles map[string]map[string]string // profile → tool → home
 }
@@ -39,7 +50,15 @@ type rawTool struct {
 	Shared []string `toml:"shared"`
 }
 
+type rawShare struct {
+	Source string   `toml:"source"`
+	Links  []string `toml:"links"`
+	Into   string   `toml:"into"`
+	Items  []string `toml:"items"`
+}
+
 type rawConfig struct {
+	Shares   map[string]rawShare          `toml:"shares"`
 	Tools    map[string]rawTool           `toml:"tools"`
 	Profiles map[string]map[string]string `toml:"profiles"`
 }
@@ -99,7 +118,7 @@ func loadConfig() (*Config, error) {
 		return nil, fmt.Errorf("%s: unknown key %s", path, und[0])
 	}
 
-	cfg := &Config{Path: path, Tools: map[string]*Tool{}, Profiles: map[string]map[string]string{}}
+	cfg := &Config{Path: path, Tools: map[string]*Tool{}, Profiles: map[string]map[string]string{}, Shares: map[string]*Share{}}
 	var problems []string
 	for name, rt := range raw.Tools {
 		t := &Tool{Name: name, Env: rt.Env, EnvSource: "config", Base: rt.Base, Shared: rt.Shared}
@@ -141,6 +160,36 @@ func loadConfig() (*Config, error) {
 			cfg.Profiles[prof][tool] = h
 		}
 	}
+	for name, rs := range raw.Shares {
+		isFile := md.IsDefined("shares", name, "links")
+		isFolder := md.IsDefined("shares", name, "into") || md.IsDefined("shares", name, "items")
+		if rs.Source == "" {
+			problems = append(problems, fmt.Sprintf("[shares.%s] needs `source`", name))
+		}
+		switch {
+		case isFile && isFolder:
+			problems = append(problems, fmt.Sprintf("[shares.%s] has both `links` and `into`/`items`; use one kind of share", name))
+		case !isFile && !isFolder:
+			problems = append(problems, fmt.Sprintf("[shares.%s] needs `links` (one file) or `into` and `items` (folders)", name))
+		case isFolder && (rs.Into == "" || len(rs.Items) == 0):
+			problems = append(problems, fmt.Sprintf("[shares.%s] a folder share needs both `into` and `items`", name))
+		case isFile && len(rs.Links) == 0:
+			problems = append(problems, fmt.Sprintf("[shares.%s] `links` is empty", name))
+		}
+		s := &Share{Name: name, Source: expand(rs.Source), Into: rs.Into, Items: rs.Items}
+		if s.Into != "" {
+			s.Into = expand(s.Into)
+		}
+		for _, l := range rs.Links {
+			s.Links = append(s.Links, expand(l))
+		}
+		for _, item := range rs.Items {
+			if item == "" || strings.Contains(item, "/") || item == "." || item == ".." {
+				problems = append(problems, fmt.Sprintf("[shares.%s] item %q must be one name with no /", name, item))
+			}
+		}
+		cfg.Shares[name] = s
+	}
 	if len(problems) > 0 {
 		sort.Strings(problems)
 		return nil, fmt.Errorf("%s:\n  %s", path, strings.Join(problems, "\n  "))
@@ -160,6 +209,15 @@ func (c *Config) toolNames() []string {
 func (c *Config) profileNames() []string {
 	names := make([]string, 0, len(c.Profiles))
 	for n := range c.Profiles {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func (c *Config) shareNames() []string {
+	names := make([]string, 0, len(c.Shares))
+	for n := range c.Shares {
 		names = append(names, n)
 	}
 	sort.Strings(names)

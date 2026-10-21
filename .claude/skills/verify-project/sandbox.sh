@@ -46,6 +46,29 @@ check "zsh hook sets and clears" bash -c "zsh -f -c 'export HOME=$S AGENTHOME_CO
 check "doctor passes with hook vars" bash -c "cd '$S/Work' && eval \"\$('$BIN' env)\" && '$BIN' doctor"
 rm "$S/.codex-work/skills" && mkdir "$S/.codex-work/skills"
 check "link reports a blocked item" bash -c "! '$BIN' link"
+mkdir -p "$S/.claude/skills/diagnose" "$S/.claude/skills/other"
+touch "$S/.claude/AGENTS.md"
+rm -rf "$S/.codex-work/skills"
+check "share plan with no [shares] changes nothing" bash -c "'$BIN' share plan | grep -q 'nothing to do'"
+cat >> "$AGENTHOME_CONFIG_DIR/config.toml" <<'EOF'
+[shares.instructions]
+source = "~/.claude/AGENTS.md"
+links  = ["~/.pi/agent/AGENTS.md"]
+[shares.skills]
+source = "~/.claude/skills"
+into   = "~/.agents/skills"
+items  = ["diagnose"]
+EOF
+check "share plan reports missing" bash -c "'$BIN' share plan | grep -c '^missing' | grep -q '^2$'"
+check "share apply links" "$BIN" share apply
+check "share linked the file" test "$(readlink "$S/.pi/agent/AGENTS.md")" = "$S/.claude/AGENTS.md"
+check "share linked only the listed skill" bash -c "test -L '$S/.agents/skills/diagnose' && ! test -e '$S/.agents/skills/other'"
+check "doctor lists shares" bash -c "cd '$S' && '$BIN' doctor | grep -q 'share skills'"
+check "share undo removes links" bash -c "'$BIN' share undo && ! test -e '$S/.pi/agent/AGENTS.md'"
+echo mine > "$S/.pi/agent/AGENTS.md"
+check "share apply reports a blocked file" bash -c "! '$BIN' share apply"
+check "blocked file left alone" test "$(cat "$S/.pi/agent/AGENTS.md")" = mine
+check "doctor fails on a blocked share" bash -c "cd '$S' && ! '$BIN' doctor"
 check "log written" test -s "$S/.local/state/agenthome/agenthome.log"
 
 [ "$fails" -eq 0 ]

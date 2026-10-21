@@ -17,11 +17,17 @@ const (
 	baseMissing             // the base home has no such item to link to
 )
 
+// pair is one symlink that should exist: path links to target. label names
+// whose link it is, for output.
+type pair struct {
+	label        string
+	path, target string
+}
+
 type linkCheck struct {
-	profile, tool string
-	path, target  string
-	state         linkState
-	actual        string // where a linkElsewhere symlink points
+	pair
+	state  linkState
+	actual string // where a linkElsewhere symlink points
 }
 
 func (c linkCheck) describe() string {
@@ -35,14 +41,14 @@ func (c linkCheck) describe() string {
 	case linkBlocked:
 		return fmt.Sprintf("blocked   %s is a real file or directory, not a link to %s", tilde(c.path), tilde(c.target))
 	default:
-		return fmt.Sprintf("no base   %s does not exist, so %s has nothing to link to", tilde(c.target), tilde(c.path))
+		return fmt.Sprintf("no source %s does not exist, so %s has nothing to link to", tilde(c.target), tilde(c.path))
 	}
 }
 
-// checkLinks inspects every shared item of every profile home without
-// changing anything.
-func checkLinks(cfg *Config, only string) []linkCheck {
-	var out []linkCheck
+// profilePairs lists every shared item of every profile home (or of one
+// profile when only is set) with the base item it should link to.
+func profilePairs(cfg *Config, only string) []pair {
+	var out []pair
 	for _, prof := range cfg.profileNames() {
 		if only != "" && prof != only {
 			continue
@@ -54,32 +60,92 @@ func checkLinks(cfg *Config, only string) []linkCheck {
 			}
 			t := cfg.Tools[tool]
 			for _, item := range t.Shared {
-				c := linkCheck{profile: prof, tool: tool, path: filepath.Join(h, item), target: filepath.Join(t.Base, item)}
-				switch fi, err := os.Lstat(c.path); {
-				case errors.Is(err, os.ErrNotExist):
-					c.state = linkMissing
-				case err != nil:
-					c.state = linkBlocked
-				case fi.Mode()&os.ModeSymlink == 0:
-					c.state = linkBlocked
-				default:
-					c.actual, _ = os.Readlink(c.path)
-					if c.actual == c.target {
-						c.state = linkOK
-					} else {
-						c.state = linkElsewhere
-					}
-				}
-				if c.state == linkMissing {
-					if _, err := os.Lstat(c.target); err != nil {
-						c.state = baseMissing
-					}
-				}
-				out = append(out, c)
+				out = append(out, pair{label: prof + "/" + tool, path: filepath.Join(h, item), target: filepath.Join(t.Base, item)})
 			}
 		}
 	}
 	return out
+}
+
+// sharePairs lists every link the [shares] table asks for.
+func sharePairs(cfg *Config) []pair {
+	var out []pair
+	seen := map[string]bool{}
+	add := func(p pair) {
+		if !seen[p.path] {
+			seen[p.path] = true
+			out = append(out, p)
+		}
+	}
+	for _, name := range cfg.shareNames() {
+		s := cfg.Shares[name]
+		label := "share " + name
+		for _, l := range s.Links {
+			add(pair{label: label, path: l, target: s.Source})
+		}
+		for _, item := range s.Items {
+			add(pair{label: label, path: filepath.Join(s.Into, item), target: filepath.Join(s.Source, item)})
+		}
+	}
+	return out
+}
+
+// checkPairs inspects every pair without changing anything.
+func checkPairs(pairs []pair) []linkCheck {
+	var out []linkCheck
+	for _, p := range pairs {
+		c := linkCheck{pair: p}
+		switch fi, err := os.Lstat(c.path); {
+		case errors.Is(err, os.ErrNotExist):
+			c.state = linkMissing
+		case err != nil:
+			c.state = linkBlocked
+		case fi.Mode()&os.ModeSymlink == 0:
+			c.state = linkBlocked
+		default:
+			c.actual, _ = os.Readlink(c.path)
+			if c.actual == c.target {
+				c.state = linkOK
+			} else {
+				c.state = linkElsewhere
+			}
+		}
+		if c.state == linkMissing {
+			if _, err := os.Lstat(c.target); err != nil {
+				c.state = baseMissing
+			}
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// createLinks makes each missing symlink, and its parent directory when that
+// is missing too. It never moves or deletes anything: any other state is
+// printed and counted in bad. kind prefixes the log line.
+func createLinks(checks []linkCheck, kind string) (bad int, err error) {
+	for _, c := range checks {
+		if c.state == linkMissing {
+			if dir := filepath.Dir(c.path); !isDir(dir) {
+				if err := os.MkdirAll(dir, 0o755); err != nil {
+					return bad, fmt.Errorf("create %s: %v", dir, err)
+				}
+				logf("%s: created directory %s", kind, dir)
+				fmt.Printf("created   %s\n", tilde(dir))
+			}
+			if err := os.Symlink(c.target, c.path); err != nil {
+				return bad, fmt.Errorf("link %s: %v", c.path, err)
+			}
+			logf("%s: %s -> %s", kind, c.path, c.target)
+			fmt.Printf("linked    %s → %s\n", tilde(c.path), tilde(c.target))
+			continue
+		}
+		if c.state != linkOK {
+			bad++
+			fmt.Println(c.describe())
+		}
+	}
+	return bad, nil
 }
 
 // cmdLink creates each profile home and the symlinks its shared items need.
@@ -91,7 +157,6 @@ func cmdLink(cfg *Config, only string) int {
 			return failf("no [profiles.%s] in %s", only, cfg.Path)
 		}
 	}
-	bad := 0
 	for _, prof := range cfg.profileNames() {
 		if only != "" && prof != only {
 			continue
@@ -110,23 +175,62 @@ func cmdLink(cfg *Config, only string) int {
 			}
 		}
 	}
-	for _, c := range checkLinks(cfg, only) {
-		if c.state == linkMissing {
-			if err := os.Symlink(c.target, c.path); err != nil {
-				return failf("link %s: %v", c.path, err)
-			}
-			logf("link: %s -> %s", c.path, c.target)
-			fmt.Printf("linked    %s → %s\n", tilde(c.path), tilde(c.target))
-			continue
-		}
-		if c.state != linkOK {
-			bad++
-			fmt.Println(c.describe())
-		}
+	bad, err := createLinks(checkPairs(profilePairs(cfg, only)), "link")
+	if err != nil {
+		return failf("%v", err)
 	}
 	if bad > 0 {
 		fmt.Fprintf(os.Stderr, "agenthome: %d item(s) need a hand fix; nothing was moved or deleted\n", bad)
 		return 1
 	}
 	return 0
+}
+
+// cmdShare plans, applies or undoes the cross-tool links in [shares]. Like
+// link, it never moves or deletes a real file; undo removes only symlinks
+// that point at a configured share's source.
+func cmdShare(cfg *Config, action string) int {
+	if action != "plan" && action != "apply" && action != "undo" {
+		return failf("usage: agenthome share plan|apply|undo")
+	}
+	checks := checkPairs(sharePairs(cfg))
+	if len(checks) == 0 {
+		fmt.Println("nothing to do: no [shares] in the config")
+		return 0
+	}
+	switch action {
+	case "plan":
+		for _, c := range checks {
+			fmt.Println(c.describe())
+		}
+		return 0
+	case "apply":
+		bad, err := createLinks(checks, "share")
+		if err != nil {
+			return failf("%v", err)
+		}
+		if bad > 0 {
+			fmt.Fprintf(os.Stderr, "agenthome: %d share link(s) need a hand fix; nothing was moved or deleted\n", bad)
+			return 1
+		}
+		return 0
+	case "undo":
+		for _, c := range checks {
+			if c.state != linkOK {
+				continue
+			}
+			if err := os.Remove(c.path); err != nil {
+				return failf("remove %s: %v", c.path, err)
+			}
+			logf("share: removed %s -> %s", c.path, c.target)
+			fmt.Printf("removed   %s\n", tilde(c.path))
+		}
+		return 0
+	}
+	return failf("usage: agenthome share plan|apply|undo")
+}
+
+func isDir(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
 }

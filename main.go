@@ -22,6 +22,7 @@ const usage = `agenthome — route directories to coding-agent profiles
   agenthome which [dir]                    the profile and homes a directory gets
   agenthome homes <tool>                   each profile's home for one tool, tab-separated
   agenthome link [profile]                 create profile homes and their shared symlinks
+  agenthome share plan|apply|undo          show, create or remove the cross-tool links in [shares]
   agenthome doctor                         check config, symlinks and this shell's variables
   agenthome env                            shell commands that set the variables for $PWD
   agenthome init zsh                       the hook ~/.zshrc evaluates
@@ -46,6 +47,15 @@ const configHelp = `Config: ~/.config/agenthome/config.toml (AGENTHOME_CONFIG_DI
   [profiles.work]
   claude = "~/.claude-work"
   codex  = "~/.codex-work"
+
+  [shares.instructions]         # optional: one real file, linked from each path
+  source = "~/.claude/AGENTS.md"
+  links  = ["~/.codex/AGENTS.md", "~/.pi/agent/AGENTS.md"]
+
+  [shares.skills]               # optional: one folder link per named item
+  source = "~/.claude/skills"
+  into   = "~/.agents/skills"
+  items  = ["diagnose", "research"]
 
 A tool missing from a profile gets its variable unset, so it uses its default
 home. A tool agenthome has no built-in variable for needs env = "...".
@@ -99,6 +109,11 @@ func run(args []string) int {
 			only = args[1]
 		}
 		return cmdLink(cfg, only)
+	case "share":
+		if len(args) != 2 {
+			return failf("usage: agenthome share plan|apply|undo")
+		}
+		return cmdShare(cfg, args[1])
 	case "doctor":
 		return cmdDoctor(cfg)
 	}
@@ -396,12 +411,21 @@ func cmdDoctor(cfg *Config) int {
 	}
 
 	fmt.Println("Symlinks")
-	checks := checkLinks(cfg, "")
+	checks := checkPairs(profilePairs(cfg, ""))
 	if len(checks) == 0 {
 		fmt.Println("      (no profile has a home of its own)")
 	}
 	for _, c := range checks {
-		note(c.state == linkOK, "%s/%s %s", c.profile, c.tool, c.describe())
+		note(c.state == linkOK, "%s %s", c.label, c.describe())
+	}
+
+	fmt.Println("Shares")
+	shares := checkPairs(sharePairs(cfg))
+	if len(shares) == 0 {
+		fmt.Println("      (no [shares] in the config)")
+	}
+	for _, c := range shares {
+		note(c.state == linkOK, "%s %s", c.label, c.describe())
 	}
 
 	fmt.Println("Routes")
