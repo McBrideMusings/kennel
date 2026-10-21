@@ -1,0 +1,17 @@
+# Every bead carries at least one of these.
+required = ["links", "routes", "config", "hooks"]
+
+[labels.links]
+about = "link.go: symlink checks and creation, profile links and cross-tool shares."
+
+[labels.routes]
+about = "routes.go and when.go: the routes file, expiry phrases and directory resolution."
+
+[labels.config]
+about = "config.go: loading and validating config.toml."
+
+[labels.hooks]
+about = "Generating another tool's hook configuration from Claude's hook list."
+
+[labels.human]
+about = "Needs a person: a decision, hardware, an account, a manual check."
