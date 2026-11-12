@@ -12,7 +12,7 @@ func shareSandbox(t *testing.T, toml string) (string, *Config, error) {
 	t.Helper()
 	h := t.TempDir()
 	t.Setenv("HOME", h)
-	t.Setenv("AGENTHOME_CONFIG_DIR", filepath.Join(h, ".cfg"))
+	t.Setenv("KENNEL_CONFIG_DIR", filepath.Join(h, ".cfg"))
 	os.MkdirAll(configDir(), 0o755)
 	body := "[tools.claude]\nbase = \"~/.claude\"\nshared = []\n" + toml
 	os.WriteFile(configPath(), []byte(body), 0o644)

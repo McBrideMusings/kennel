@@ -1,4 +1,4 @@
-// agenthome routes directories to named profiles for coding-agent CLIs
+// kennel routes directories to named profiles for coding-agent CLIs
 // (Claude Code, Codex, ...). A profile gives each tool its own home directory,
 // so a directory under ~/Work starts `claude` and `codex` logged into the work
 // accounts. A zsh hook exports each tool's home variable on every cd.
@@ -12,26 +12,26 @@ import (
 	"time"
 )
 
-const usage = `agenthome — route directories to coding-agent profiles
+const usage = `kennel — route directories to coding-agent profiles
 
-  agenthome route list                     routes and profiles
-  agenthome route add <path> <profile> [when] [--permanent]
+  kennel route list                        routes and profiles
+  kennel route add <path> <profile> [when] [--permanent]
                                            route a directory (expires tomorrow unless told)
-  agenthome route rm <path>                delete a directory's route
-  agenthome route prune                    delete expired routes now
-  agenthome which [dir]                    the profile and homes a directory gets
-  agenthome homes <tool>                   each profile's home for one tool, tab-separated
-  agenthome link [profile]                 create profile homes and their shared symlinks
-  agenthome share plan|apply|undo          show, create or remove the cross-tool links in [shares]
-  agenthome doctor                         check config, symlinks and this shell's variables
-  agenthome env                            shell commands that set the variables for $PWD
-  agenthome init zsh                       the hook ~/.zshrc evaluates
-  agenthome help config                    the config file format
+  kennel route rm <path>                   delete a directory's route
+  kennel route prune                       delete expired routes now
+  kennel which [dir]                       the profile and homes a directory gets
+  kennel homes <tool>                      each profile's home for one tool, tab-separated
+  kennel link [profile]                    create profile homes and their shared symlinks
+  kennel share plan|apply|undo             show, create or remove the cross-tool links in [shares]
+  kennel doctor                            check config, symlinks and this shell's variables
+  kennel env                               shell commands that set the variables for $PWD
+  kennel init zsh                          the hook ~/.zshrc evaluates
+  kennel help config                       the config file format
 
   when: ` + whenHelp + `
 `
 
-const configHelp = `Config: ~/.config/agenthome/config.toml (AGENTHOME_CONFIG_DIR moves the directory)
+const configHelp = `Config: ~/.config/kennel/config.toml (KENNEL_CONFIG_DIR moves the directory)
 
   [tools.claude]
   # env = "CLAUDE_CONFIG_DIR"   built in for claude and codex; set it to override
@@ -58,8 +58,8 @@ const configHelp = `Config: ~/.config/agenthome/config.toml (AGENTHOME_CONFIG_DI
   items  = ["diagnose", "research"]
 
 A tool missing from a profile gets its variable unset, so it uses its default
-home. A tool agenthome has no built-in variable for needs env = "...".
-Routes live beside the config in ~/.config/agenthome/routes.
+home. A tool kennel has no built-in variable for needs env = "...".
+Routes live beside the config in ~/.config/kennel/routes.
 `
 
 func main() { os.Exit(run(os.Args[1:])) }
@@ -78,7 +78,7 @@ func run(args []string) int {
 		return 0
 	case "init":
 		if len(args) != 2 || args[1] != "zsh" {
-			return failf("usage: agenthome init zsh")
+			return failf("usage: kennel init zsh")
 		}
 		return cmdInit()
 	}
@@ -100,7 +100,7 @@ func run(args []string) int {
 		return cmdRoute(cfg, args[1:])
 	case "homes":
 		if len(args) != 2 {
-			return failf("usage: agenthome homes <tool>")
+			return failf("usage: kennel homes <tool>")
 		}
 		return cmdHomes(cfg, args[1])
 	case "link":
@@ -111,7 +111,7 @@ func run(args []string) int {
 		return cmdLink(cfg, only)
 	case "share":
 		if len(args) != 2 {
-			return failf("usage: agenthome share plan|apply|undo")
+			return failf("usage: kennel share plan|apply|undo")
 		}
 		return cmdShare(cfg, args[1])
 	case "doctor":
@@ -132,14 +132,14 @@ func cmdInit() int {
 		exe = real
 	}
 	q := shellQuote(exe)
-	// The wrapper repeats the eval rather than calling _agenthome_apply: the
-	// Claude Code Bash tool's shell snapshot keeps agenthome() but drops
+	// The wrapper repeats the eval rather than calling _kennel_apply: the
+	// Claude Code Bash tool's shell snapshot keeps kennel() but drops
 	// underscore-prefixed functions.
-	fmt.Printf(`_agenthome_apply() { eval "$(%[1]s env)" }
-agenthome() { %[1]s "$@"; local rc=$?; eval "$(%[1]s env)"; return $rc }
+	fmt.Printf(`_kennel_apply() { eval "$(%[1]s env)" }
+kennel() { %[1]s "$@"; local rc=$?; eval "$(%[1]s env)"; return $rc }
 autoload -Uz add-zsh-hook
-add-zsh-hook chpwd _agenthome_apply
-_agenthome_apply
+add-zsh-hook chpwd _kennel_apply
+_kennel_apply
 `, q)
 	return 0
 }
@@ -224,7 +224,7 @@ func cmdRoute(cfg *Config, args []string) int {
 		return routeAdd(cfg, args)
 	case "rm", "remove":
 		if len(args) != 1 {
-			return failf("usage: agenthome route rm <path>")
+			return failf("usage: kennel route rm <path>")
 		}
 		return routeRemove(args[0])
 	case "prune":
@@ -302,7 +302,7 @@ func routeAdd(cfg *Config, args []string) int {
 		}
 	}
 	if len(pos) < 2 {
-		return failf("usage: agenthome route add <path> <profile> [when] [--permanent]")
+		return failf("usage: kennel route add <path> <profile> [when] [--permanent]")
 	}
 	path, err := normalizeRoutePath(pos[0])
 	if err != nil {
@@ -463,11 +463,11 @@ func cmdDoctor(cfg *Config) int {
 		}
 	}
 	if problems > before {
-		fmt.Println("      (a wrong variable here usually means ~/.zshrc does not run `eval \"$(agenthome init zsh)\"`)")
+		fmt.Println("      (a wrong variable here usually means ~/.zshrc does not run `eval \"$(kennel init zsh)\"`)")
 	}
 
 	if problems > 0 {
-		fmt.Fprintf(os.Stderr, "agenthome: %d problem(s)\n", problems)
+		fmt.Fprintf(os.Stderr, "kennel: %d problem(s)\n", problems)
 		return 1
 	}
 	return 0
@@ -476,20 +476,20 @@ func cmdDoctor(cfg *Config) int {
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 func failf(format string, a ...any) int {
-	fmt.Fprintf(os.Stderr, "agenthome: "+format+"\n", a...)
+	fmt.Fprintf(os.Stderr, "kennel: "+format+"\n", a...)
 	return 1
 }
 
 func fatalf(format string, a ...any) { os.Exit(failf(format, a...)) }
 
-// logf appends a timestamped line to ~/.local/state/agenthome/agenthome.log
-// for every change agenthome makes on disk. Logging never fails a command.
+// logf appends a timestamped line to ~/.local/state/kennel/kennel.log
+// for every change kennel makes on disk. Logging never fails a command.
 func logf(format string, a ...any) {
-	dir := filepath.Join(home(), ".local", "state", "agenthome")
+	dir := filepath.Join(home(), ".local", "state", "kennel")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "agenthome.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(filepath.Join(dir, "kennel.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}

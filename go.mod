@@ -1,4 +1,4 @@
-module agenthome
+module github.com/McBrideMusings/kennel
 
 go 1.24.1
 

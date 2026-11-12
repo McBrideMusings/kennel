@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-const routesHeader = `# agenthome routes — <path> <profile> [YYYY-MM-DD]
+const routesHeader = `# kennel routes — <path> <profile> [YYYY-MM-DD]
 #   path    — absolute or ~-prefixed directory; the longest match wins
 #   profile — a [profiles.<name>] in config.toml, or the row is ignored
 #   date    — last day the row applies; expired rows are deleted on the next cd

@@ -180,7 +180,7 @@ func cmdLink(cfg *Config, only string) int {
 		return failf("%v", err)
 	}
 	if bad > 0 {
-		fmt.Fprintf(os.Stderr, "agenthome: %d item(s) need a hand fix; nothing was moved or deleted\n", bad)
+		fmt.Fprintf(os.Stderr, "kennel: %d item(s) need a hand fix; nothing was moved or deleted\n", bad)
 		return 1
 	}
 	return 0
@@ -191,7 +191,7 @@ func cmdLink(cfg *Config, only string) int {
 // that point at a configured share's source.
 func cmdShare(cfg *Config, action string) int {
 	if action != "plan" && action != "apply" && action != "undo" {
-		return failf("usage: agenthome share plan|apply|undo")
+		return failf("usage: kennel share plan|apply|undo")
 	}
 	checks := checkPairs(sharePairs(cfg))
 	if len(checks) == 0 {
@@ -210,7 +210,7 @@ func cmdShare(cfg *Config, action string) int {
 			return failf("%v", err)
 		}
 		if bad > 0 {
-			fmt.Fprintf(os.Stderr, "agenthome: %d share link(s) need a hand fix; nothing was moved or deleted\n", bad)
+			fmt.Fprintf(os.Stderr, "kennel: %d share link(s) need a hand fix; nothing was moved or deleted\n", bad)
 			return 1
 		}
 		return 0
@@ -227,7 +227,7 @@ func cmdShare(cfg *Config, action string) int {
 		}
 		return 0
 	}
-	return failf("usage: agenthome share plan|apply|undo")
+	return failf("usage: kennel share plan|apply|undo")
 }
 
 func isDir(p string) bool {

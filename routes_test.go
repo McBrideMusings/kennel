@@ -53,7 +53,7 @@ func TestResolve(t *testing.T) {
 // comments, spaced paths and unreadable rows exactly as written, drops only
 // the rows it means to, and an unreadable row never stops the others routing.
 func TestRoutesFileRoundTrip(t *testing.T) {
-	t.Setenv("AGENTHOME_CONFIG_DIR", t.TempDir())
+	t.Setenv("KENNEL_CONFIG_DIR", t.TempDir())
 	h := t.TempDir()
 	t.Setenv("HOME", h)
 	in := "# mine\n\n~/Work work\n  # indented note\n~/old personal 2000-01-01\n~/my  docs personal 2999-12-31\nlonely\n"

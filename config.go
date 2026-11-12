@@ -72,10 +72,10 @@ func home() string {
 }
 
 func configDir() string {
-	if d := os.Getenv("AGENTHOME_CONFIG_DIR"); d != "" {
+	if d := os.Getenv("KENNEL_CONFIG_DIR"); d != "" {
 		return d
 	}
-	return filepath.Join(home(), ".config", "agenthome")
+	return filepath.Join(home(), ".config", "kennel")
 }
 
 func configPath() string { return filepath.Join(configDir(), "config.toml") }
@@ -109,7 +109,7 @@ func loadConfig() (*Config, error) {
 	var raw rawConfig
 	md, err := toml.DecodeFile(path, &raw)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("no config at %s (see `agenthome help config`)", path)
+		return nil, fmt.Errorf("no config at %s (see `kennel help config`)", path)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %v", path, err)
@@ -126,7 +126,7 @@ func loadConfig() (*Config, error) {
 			t.Env, t.EnvSource = builtinEnv[name], "built-in"
 		}
 		if t.Env == "" {
-			problems = append(problems, fmt.Sprintf("[tools.%s] needs `env`: agenthome has no built-in variable for %q", name, name))
+			problems = append(problems, fmt.Sprintf("[tools.%s] needs `env`: kennel has no built-in variable for %q", name, name))
 		}
 		if !md.IsDefined("tools", name, "base") {
 			problems = append(problems, fmt.Sprintf("[tools.%s] needs `base`", name))
