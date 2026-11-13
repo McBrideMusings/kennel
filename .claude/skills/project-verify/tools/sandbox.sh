@@ -7,7 +7,7 @@ trap 'rm -rf "$S"' EXIT
 BIN=$S/kennel
 (cd "$REPO" && go build -o "$BIN" .) || { echo "FAIL build"; exit 1; }
 export HOME=$S KENNEL_CONFIG_DIR=$S/.config/kennel
-unset CLAUDE_CONFIG_DIR CODEX_HOME PI_CODING_AGENT_DIR
+unset CLAUDE_CONFIG_DIR CODEX_HOME PI_CODING_AGENT_DIR XDG_DATA_HOME
 fails=0
 check() { # check <name> <command...>: passes when the command exits 0
   local name=$1; shift
@@ -109,5 +109,20 @@ rm -rf "$S/.claude/skills/fresh"
 check "doctor flags a link whose source entry is gone" bash -c "cd '$S' && '$BIN' doctor | grep -q '^FAIL  share skills orphan    ~/.agents/skills/fresh '"
 check "share prune removes it" bash -c "'$BIN' share prune skills && ! test -L '$S/.agents/skills/fresh' && test -L '$S/.agents/skills/diagnose'"
 check "log written" test -s "$S/.local/state/kennel/kennel.log"
+
+V=$S/.local/share/kennel
+mkdir -p "$S/.claude/skills/recomp" && echo original > "$S/.claude/skills/recomp/SKILL.md"
+check "vault add links the original into the vault" bash -c "'$BIN' vault add '$S/.claude/skills/recomp' && test \"\$(readlink '$S/.claude/skills/recomp')\" = '$V/vault/skills/recomp'"
+check "vault add put the original in the Trash" test "$(cat "$S/.Trash/recomp/SKILL.md")" = original
+check "the vault folder holds no .git" bash -c "! test -e '$V/vault/.git' && test -f '$V/vault.git/HEAD'"
+check "the vault has no remote" test -z "$(git --git-dir="$V/vault.git" remote)"
+echo edited > "$S/.claude/skills/recomp/SKILL.md"
+check "an outside edit is one sweep commit on the next command" bash -c "'$BIN' vault log recomp | head -1 | grep -q 'sweep: skills/recomp/SKILL.md changed outside kennel'"
+check "log lists the add under the sweep" bash -c "test \$('$BIN' vault log recomp | wc -l) -eq 2 && '$BIN' vault log recomp | tail -1 | grep -q 'add skills/recomp from ~/.claude/skills/recomp'"
+check "show at the add prints the original text" bash -c "test \"\$('$BIN' vault show skills/recomp/SKILL.md@\$('$BIN' vault log recomp | tail -1 | cut -f1))\" = original"
+echo agent > "$S/.claude/skills/recomp/SKILL.md"
+check "vault commit names the harness and session" bash -c "'$BIN' vault commit --session s1 --harness codex '$S/.claude/skills/recomp/SKILL.md' && '$BIN' vault log recomp | head -1 | grep -q 'edit skills/recomp/SKILL.md (codex session s1)'"
+check "vault add refuses a link" bash -c "! '$BIN' vault add '$S/.claude/skills/recomp' 2>/dev/null"
+check "vault add logged" grep -q 'vault add: linked .*/.claude/skills/recomp -> ' "$S/.local/state/kennel/kennel.log"
 
 [ "$fails" -eq 0 ]

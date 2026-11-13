@@ -30,6 +30,11 @@ const usage = `kennel — route directories to coding-agent profiles
   kennel hooks list codex|pi               the shared hooks as JSON, wrapped for that tool
   kennel hook codex|pi -- <command>        run one Claude hook on that tool's payload
   kennel doctor                            check config, symlinks and this shell's variables
+  kennel vault add <path>                  move a skill folder or snippet into the vault, link it back
+  kennel vault log <item>                  a vault skill or snippet's commits
+  kennel vault show <item>[@<rev>]         a vault item's files at a commit
+  kennel vault commit --session <id> --harness <h> <file>
+                                           commit one vault file an agent edited
   kennel env [fish]                        shell commands that set the variables for $PWD
   kennel init zsh|bash|fish                the hook ~/.zshrc, ~/.bashrc or config.fish evaluates
   kennel help config                       the config file format
@@ -92,6 +97,8 @@ func run(args []string) int {
 		return 0
 	case "hook":
 		return cmdHook(args[1:])
+	case "vault":
+		return cmdVault(args[1:])
 	case "init":
 		if len(args) != 2 || (args[1] != "zsh" && args[1] != "bash" && args[1] != "fish") {
 			return failf("usage: kennel init zsh|bash|fish")

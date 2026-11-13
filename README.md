@@ -163,6 +163,25 @@ failed hook that lets the call run, into a `deny` with the same reason, and a re
 rewritten command. Under pi, `ask` opens a confirm dialog, `deny` blocks the call and a
 rewrite changes the call's input.
 
+## Vault
+
+The vault keeps skills and snippets on this Mac, with every change committed. It lives in
+`~/.local/share/kennel/` (`$XDG_DATA_HOME/kennel/` when set): the files in `vault/`
+(`skills/<name>/`, `snippets/<name>.md`) and their history in `vault.git/` beside it, so
+the folder holds no `.git`. The repository has no remote.
+
+| Command | Does |
+| --- | --- |
+| `kennel vault add <path>` | copies a skill folder or snippet `.md` into the vault, commits it, moves the original to `~/.Trash` and puts a link to the vault copy where it was |
+| `kennel vault log <item>` | the item's commits: short sha, time, message |
+| `kennel vault show <item>[@<rev>]` | the item at a commit: a file's text, or each file of a skill under a `==> path <==` header |
+| `kennel vault commit --session <id> --harness <h> <file>` | commits one file an agent edited, naming the harness and session |
+
+An item is a path inside the vault (`skills/recomp`, `skills/recomp/SKILL.md`) or a bare
+name (`recomp`). Every vault command first commits any change made outside kennel as one
+`sweep` commit. `vault add` is the one kennel command that moves a file of yours; it
+refuses a link, a name the vault already holds and a folder that is its own git repository.
+
 ## Routes
 
 `~/.config/kennel/routes`, one `<path> <profile> [YYYY-MM-DD]` per line:
