@@ -93,7 +93,7 @@ button:disabled{opacity:.45;cursor:default}
 .ask{background:var(--tint);border-radius:6px;padding:10px 12px;font-size:12.5px}
 .ask p{margin:0 0 8px;overflow-wrap:anywhere}.ask code{font:12px var(--mono)}
 .ask .row{display:flex;gap:6px}
-.dec.allow{background:var(--ok-t);color:var(--ok)}.dec.ask{background:var(--warn-t);color:var(--warn)}.dec.deny{background:var(--bad-t);color:var(--bad)}
+.dec.allow{background:var(--ok-t);color:var(--ok)}.dec.ask{background:var(--warn-t);color:var(--warn)}.dec.deny,.dec.problem{background:var(--bad-t);color:var(--bad)}
 </style>
 </head>
 <body>
@@ -351,7 +351,7 @@ const CLAUDE_MARK = () => `<span class="gen" role="img" aria-label="From Claude'
 // line after the anchor (the rule's decision key, the hook's event), so a
 // rule under both allow and deny marks the right one.
 const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const findRule = e => e.decision === "setting"
+const findRule = e => e.problem ? null : e.decision === "setting"
   ? {match: (k => line => new RegExp("^\\s*" + reEsc(k) + "\\s*=").test(line))(e.rule.split(" = ")[0])}
   : {anchor: JSON.stringify(e.decision) + ":", match: line => line.includes(JSON.stringify(e.rule))};
 const findServer = name => {
@@ -430,7 +430,7 @@ function renderTree() {
     }
     if (S.section === "permissions") for (const g of groups(b)) {
       if (!folder(b.scope + ":" + g.name, 0, `<span class="dec ${esc(g.name)}">${esc(g.name)}</span>`, g.entries.length)) continue;
-      for (const [e, i] of g.entries) leaf(b.scope + ":" + i, 1, esc(e.rule), {file: e.file, find: findRule(e)}, "", e.rule);
+      for (const [e, i] of g.entries) leaf(b.scope + ":" + i, 1, esc(e.problem || e.rule), {file: e.file, find: findRule(e)}, "", e.problem || e.rule, e.problem ? "wrap bad" : "");
     }
     if (S.section === "mcp") b.entries.forEach((e, i) =>
       leaf(b.scope + ":" + i, 0, esc(e.name), {file: e.file, find: findServer(e.name)}));

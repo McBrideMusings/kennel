@@ -162,6 +162,48 @@ func TestHarnessShowPermissions(t *testing.T) {
 	}
 }
 
+// A .rules file or config.toml that fails stands as one problem entry; the
+// other files still list.
+func TestHarnessShowPermissionsBadRules(t *testing.T) {
+	h, _ := harnessSandbox(t)
+	for name, body := range map[string]string{
+		"rules/alt.rules":      "prefix_rule(pattern=[\"git\", [\"push\", 1]])\n",
+		"rules/broken.rules":   "prefix_rule(pattern=[\"ls\"])\nprefix_rule(pattern=[\"x\"], decision=\"maybe\")\n",
+		"rules/empty.rules":    "prefix_rule(pattern=[])\n",
+		"rules/emptyalt.rules": "prefix_rule(pattern=[\"git\", []])\n",
+		"rules/number.rules":   "prefix_rule(pattern=[\"rm\", 3])\n",
+		"rules/syntax.rules":   "prefix_rule(\n",
+		"config.toml":          "approval_policy = \n",
+	} {
+		if err := os.WriteFile(filepath.Join(h, ".codex", name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := showJSON(t, "permissions", "--harness", "codex")
+	r, d, p := c.names("rule"), c.names("decision"), c.names("problem")
+	if !eq(r[0], []string{"config.toml", "alt.rules", "broken.rules", "go build", "git [push|reset]", "empty.rules", "emptyalt.rules", "number.rules", "syntax.rules"}) ||
+		!eq(d[0], []string{"problem", "problem", "problem", "allow", "ask", "problem", "problem", "problem", "problem"}) {
+		t.Fatalf("codex permissions = %q %q", r, d)
+	}
+	for i, want := range map[int]string{
+		0: "config.toml",
+		1: "pattern word 2 has an alternative of type int, want string",
+		2: "unknown decision",
+		5: "empty pattern",
+		6: "pattern word 2 is an empty list",
+		7: "pattern word 2 has type int, want string or list",
+		8: "syntax.rules",
+	} {
+		if !strings.Contains(p[0][i], want) {
+			t.Errorf("problem %d (%s) = %q, want %q", i, r[0][i], p[0][i], want)
+		}
+	}
+	out, code := quiet(t, func() int { return run([]string{"harness", "show", "permissions", "--harness", "codex"}) })
+	if code != 0 || !strings.Contains(out, "  problem\tnumber.rules  (~/.codex/rules/number.rules: pattern word 2 has type int, want string or list)\n") {
+		t.Fatalf("text output (exit %d):\n%s", code, out)
+	}
+}
+
 func TestHarnessShowHooks(t *testing.T) {
 	h, proj := harnessSandbox(t)
 	s := showJSON(t, "hooks", "--scope", proj)

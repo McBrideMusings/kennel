@@ -83,8 +83,9 @@ type guidanceEntry struct {
 
 type permissionEntry struct {
 	Rule     string `json:"rule"`
-	Decision string `json:"decision"` // allow, ask, deny, or setting for a Codex config value
+	Decision string `json:"decision"` // allow, ask, deny, setting for a Codex config value, or problem for a .rules file that failed
 	File     string `json:"file"`
+	Problem  string `json:"problem,omitempty"`
 }
 
 type hookEntry struct {
@@ -427,8 +428,13 @@ func (sc *harnessScope) permissions(scope string) ([]permissionEntry, error) {
 			ApprovalPolicy string `toml:"approval_policy"`
 			SandboxMode    string `toml:"sandbox_mode"`
 		}
+		// A file that fails to read stands as one problem entry, so the rest
+		// of the section still lists.
+		problem := func(file string, err error) {
+			out = append(out, permissionEntry{Rule: filepath.Base(file), Decision: "problem", File: file, Problem: err.Error()})
+		}
 		if _, err := readTOML(conf, &c); err != nil {
-			return nil, err
+			problem(conf, err)
 		}
 		setting := func(key, val, file string) {
 			if val != "" {
@@ -446,7 +452,7 @@ func (sc *harnessScope) permissions(scope string) ([]permissionEntry, error) {
 				} `toml:"projects"`
 			}
 			if _, err := readTOML(global, &g); err != nil {
-				return nil, err
+				problem(global, err)
 			}
 			setting("trust_level", g.Projects[sc.Root].TrustLevel, global)
 		}
@@ -454,7 +460,8 @@ func (sc *harnessScope) permissions(scope string) ([]permissionEntry, error) {
 		for _, f := range rules {
 			r, err := codexRules(f)
 			if err != nil {
-				return nil, err
+				problem(f, err)
+				continue
 			}
 			out = append(out, r...)
 		}
@@ -478,23 +485,34 @@ func codexRules(path string) ([]permissionEntry, error) {
 			"justification?", &justification, "match?", &match, "not_match?", &notMatch); err != nil {
 			return nil, err
 		}
+		if pattern.Len() == 0 {
+			return nil, fmt.Errorf("empty pattern")
+		}
 		var words []string
 		for i := 0; i < pattern.Len(); i++ {
 			switch v := pattern.Index(i).(type) {
 			case starlark.String:
 				words = append(words, string(v))
 			case *starlark.List: // alternatives for one word
+				if v.Len() == 0 {
+					return nil, fmt.Errorf("pattern word %d is an empty list", i+1)
+				}
 				var alts []string
 				for j := 0; j < v.Len(); j++ {
-					s, _ := starlark.AsString(v.Index(j))
+					s, ok := starlark.AsString(v.Index(j))
+					if !ok {
+						return nil, fmt.Errorf("pattern word %d has an alternative of type %s, want string", i+1, v.Index(j).Type())
+					}
 					alts = append(alts, s)
 				}
 				words = append(words, "["+strings.Join(alts, "|")+"]")
+			default:
+				return nil, fmt.Errorf("pattern word %d has type %s, want string or list", i+1, v.Type())
 			}
 		}
 		d, ok := codexDecisions[string(decision)]
 		if !ok {
-			return nil, fmt.Errorf("unknown decision %q", decision)
+			return nil, fmt.Errorf("unknown decision %q", string(decision))
 		}
 		out = append(out, permissionEntry{Rule: strings.Join(words, " "), Decision: d, File: path})
 		return starlark.None, nil
@@ -756,7 +774,11 @@ func printShow(s *harnessShow) {
 			}
 		case []permissionEntry:
 			for _, e := range es {
-				lines = append(lines, e.Decision+"\t"+e.Rule)
+				line := e.Decision + "\t" + e.Rule
+				if e.Problem != "" {
+					line += "  (" + e.Problem + ")"
+				}
+				lines = append(lines, line)
 			}
 		case []hookEntry:
 			for _, e := range es {
