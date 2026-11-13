@@ -109,5 +109,21 @@ rm -rf "$S/.claude/skills/fresh"
 check "doctor flags a link whose source entry is gone" bash -c "cd '$S' && '$BIN' doctor | grep -q '^FAIL  share skills orphan    ~/.agents/skills/fresh '"
 check "share prune removes it" bash -c "'$BIN' share prune skills && ! test -L '$S/.agents/skills/fresh' && test -L '$S/.agents/skills/diagnose'"
 check "log written" test -s "$S/.local/state/kennel/kennel.log"
+REC="$S/.local/state/kennel/links"
+"$BIN" share apply >/dev/null
+check "share apply records each link" bash -c "grep -qx '$S/.pi/agent/AGENTS.md	$S/.claude/AGENTS.md' '$REC' && grep -q '^$S/.agents/skills/diagnose	' '$REC'"
+"$BIN" share add instructions --link '~/.gemini/AGENTS.md' >/dev/null
+sed -i '' 's|^links  = \["~/.pi/agent/AGENTS.md", "~/.gemini/AGENTS.md"\]$|links  = ["~/.pi/agent/AGENTS.md"]|' "$KENNEL_CONFIG_DIR/config.toml"
+check "doctor fails on a file-share link that left config" bash -c "cd '$S' && '$BIN' doctor | grep -q '^FAIL  recorded orphan    ~/.gemini/AGENTS.md → ~/.claude/AGENTS.md'"
+check "share prune removes it and its line" bash -c "'$BIN' share prune | grep -q '^pruned    ~/.gemini/AGENTS.md' && ! test -L '$S/.gemini/AGENTS.md' && ! grep -q gemini '$REC' && test -L '$S/.pi/agent/AGENTS.md'"
+printf '%s\t%s\n' "$S/.gemini/AGENTS.md" "$S/.claude/AGENTS.md" >> "$REC"
+ln -s /elsewhere "$S/.gemini/AGENTS.md"
+check "a re-pointed recorded link is left alone, its line dropped" bash -c "cd '$S' && ! '$BIN' doctor | grep -q gemini && '$BIN' share prune >/dev/null && test \"\$(readlink '$S/.gemini/AGENTS.md')\" = /elsewhere && ! grep -q gemini '$REC'"
+rm "$REC"
+check "share apply records links that already exist" bash -c "'$BIN' share apply >/dev/null && grep -q '^$S/.pi/agent/AGENTS.md	' '$REC'"
+(cd "$S/Work" && "$BIN" env > "$S/env.before")
+chmod 000 "$REC"
+check "kennel env never opens the record" bash -c "cd '$S/Work' && '$BIN' env > '$S/env.after' && test -s '$S/env.after' && cmp -s '$S/env.before' '$S/env.after'"
+chmod 644 "$REC"
 
 [ "$fails" -eq 0 ]

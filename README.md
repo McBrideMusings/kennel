@@ -112,8 +112,17 @@ and removes its link, and `add` takes it back out of `exclude` and links it.
 
 An orphan is a symlink in a folder share's `into` that points inside its `source` under a
 name no share lists, as when an item is dropped from `items` after `apply`, or, with
-`items = "*"`, when an entry is excluded or deleted from `source`. `plan` and
-`doctor` report each one, `doctor` as a FAIL.
+`items = "*"`, when an entry is excluded or deleted from `source`. A file share's link is
+an orphan once its path leaves every share's `links` while it still points where kennel
+linked it. `plan` and `doctor` report each one, `doctor` as a FAIL.
+
+kennel finds a file share's orphans in `~/.local/state/kennel/links`, its record of every
+share link it made: one line per link, the path and its target separated by a tab. `apply`
+and `add` record each link in place, a link made before the record existed included, and
+`undo`, `rm` and `prune` drop the lines of the links they remove. A recorded link no share
+lists belongs to no share, so only the unscoped `kennel share prune` and `kennel share undo`
+remove it. A recorded path that is gone or now points elsewhere is left alone, and `prune`
+drops its line.
 
 Like `link`, `share apply` never moves or deletes a file: a real file or directory where a
 link goes is reported as blocked and left alone. Profile homes need nothing extra, since
@@ -192,7 +201,9 @@ kennel route list
 | `kennel doctor` | config, every shared symlink, every share link, whether opted-in hook files are current, ignored routes, and whether this shell's variables match the route for `$PWD`; exits 1 on any problem |
 
 Every change kennel makes on disk (route edits, expiry drops, homes and links it
-creates) is logged with a timestamp to `~/.local/state/kennel/kennel.log`.
+creates) is logged with a timestamp to `~/.local/state/kennel/kennel.log`. The share links
+it made are also kept, one per line, in `~/.local/state/kennel/links`; `kennel env` reads
+neither file.
 
 ## What each tool keeps per account
 

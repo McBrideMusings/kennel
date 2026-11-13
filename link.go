@@ -17,6 +17,7 @@ const (
 	linkBlocked             // a real file or directory sits where the link goes
 	baseMissing             // the base home has no such item to link to
 	linkOrphan              // a symlink into a folder share's source whose name is not in its items
+	linkRecorded            // a share link in the links record that no share asks for any more
 )
 
 const shareUsage = `usage: kennel share plan|apply|undo|prune [share [item]]
@@ -50,6 +51,8 @@ func (c linkCheck) describe() string {
 		return fmt.Sprintf("blocked   %s is a real file or directory, not a link to %s", tilde(c.path), tilde(c.target))
 	case linkOrphan:
 		return fmt.Sprintf("orphan    %s → %s (not in the share's items; `kennel share prune` removes it)", tilde(c.path), tilde(c.target))
+	case linkRecorded:
+		return fmt.Sprintf("orphan    %s → %s (no share lists it any more; `kennel share prune` removes it)", tilde(c.path), tilde(c.target))
 	case baseMissing:
 		if c.unreadable {
 			return fmt.Sprintf("no source %s is not a readable folder, so %s links nothing", tilde(c.target), tilde(c.path))
@@ -152,12 +155,16 @@ func orphanChecks(cfg *Config) []linkCheck {
 	return out
 }
 
-// removeLinks deletes each check's symlink and logs it as verb.
+// removeLinks deletes each check's symlink, logs it as verb and drops it
+// from the links record.
 func removeLinks(checks []linkCheck, verb string) error {
+	var gone []string
+	defer func() { forgetLinks(gone) }()
 	for _, c := range checks {
 		if err := os.Remove(c.path); err != nil {
 			return fmt.Errorf("remove %s: %v", c.path, err)
 		}
+		gone = append(gone, c.path)
 		logf("share: %s %s -> %s", verb, c.path, c.target)
 		fmt.Printf("%-9s %s\n", verb, tilde(c.path))
 	}
@@ -305,17 +312,23 @@ func scopeShares(cfg *Config, args []string, all []linkCheck) (shareScope, error
 // cmdShare plans, applies, undoes or prunes the cross-tool links in
 // [shares], or only those of one share or one item when args names it. Like
 // link, it never moves or deletes a real file. undo removes every link in
-// scope plus every orphan in scope; prune removes orphans only.
+// scope plus every orphan in scope; prune removes orphans only. apply
+// records each link in place in the links record; a recorded link no share
+// lists is an orphan of no share, so only an unscoped command reaches it, and
+// an unscoped prune also drops the record's lines whose link is gone or
+// points elsewhere now.
 func cmdShare(cfg *Config, action string, args []string) int {
 	if action != "plan" && action != "apply" && action != "undo" && action != "prune" || len(args) > 2 {
 		return failf(shareUsage)
 	}
-	if len(cfg.Shares) == 0 && len(args) == 0 {
+	rec, _ := readRecord()
+	if len(cfg.Shares) == 0 && len(args) == 0 && len(rec) == 0 {
 		fmt.Println("nothing to do: no [shares] in the config")
 		return 0
 	}
 	checks := checkPairs(sharePairs(cfg))
-	orphans := orphanChecks(cfg)
+	recorded, stale := recordedOrphans(cfg, rec)
+	orphans := append(orphanChecks(cfg), recorded...)
 	scope, err := scopeShares(cfg, args, append(checks, orphans...))
 	if err != nil {
 		return failf("%v", err)
@@ -328,6 +341,11 @@ func cmdShare(cfg *Config, action string, args []string) int {
 		}
 	case "apply":
 		bad, err := createLinks(checks, "share")
+		var made []pair
+		for _, c := range checks {
+			made = append(made, c.pair)
+		}
+		recordLinks(checkPairs(made))
 		if err != nil {
 			return failf("%v", err)
 		}
@@ -351,6 +369,9 @@ func cmdShare(cfg *Config, action string, args []string) int {
 		}
 		if err := removeLinks(orphans, "pruned"); err != nil {
 			return failf("%v", err)
+		}
+		if scope.name == "" {
+			forgetLinks(stale)
 		}
 	}
 	return 0

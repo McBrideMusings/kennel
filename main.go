@@ -495,7 +495,15 @@ func cmdDoctor(cfg *Config) int {
 	if len(shares) == 0 {
 		fmt.Println("      (no [shares] in the config)")
 	}
-	for _, c := range append(shares, orphanChecks(cfg)...) {
+	rec, err := readRecord()
+	switch {
+	case os.IsNotExist(err):
+		fmt.Printf("      (no share link recorded yet in %s)\n", tilde(recordPath()))
+	case err != nil:
+		fmt.Printf("      (the links record cannot be read, so links that left config.toml go unseen: %v)\n", err)
+	}
+	recorded, _ := recordedOrphans(cfg, rec)
+	for _, c := range append(append(shares, orphanChecks(cfg)...), recorded...) {
 		note(c.state == linkOK, "%s %s", c.label, c.describe())
 	}
 
