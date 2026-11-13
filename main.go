@@ -23,6 +23,9 @@ const usage = `kennel — route directories to coding-agent profiles
   kennel homes <tool>                      each profile's home for one tool, tab-separated
   kennel link [profile]                    create profile homes and their shared symlinks
   kennel share plan|apply|undo             show, create or remove the cross-tool links in [shares]
+  kennel hooks plan|apply                  show or write Claude's shared hooks for Codex and pi ([hooks])
+  kennel hooks list codex|pi               the shared hooks as JSON, wrapped for that tool
+  kennel hook codex|pi -- <command>        run one Claude hook on that tool's payload
   kennel doctor                            check config, symlinks and this shell's variables
   kennel env                               shell commands that set the variables for $PWD
   kennel init zsh                          the hook ~/.zshrc evaluates
@@ -57,6 +60,13 @@ const configHelp = `Config: ~/.config/kennel/config.toml (KENNEL_CONFIG_DIR move
   into   = "~/.agents/skills"
   items  = ["diagnose", "research"]
 
+  [hooks]                       # optional: run Claude's tagged hooks elsewhere
+  codex = true                  # rewrite ~/.codex/hooks.json entries into ~/.claude/hooks
+  pi    = true                  # write ~/.pi/agent/extensions/kennel-hooks.ts
+
+A hook script reaches Codex and pi only with a "# kennel-hook: portable" or
+"# kennel-hook: adapter" line in its first 20 lines.
+
 A tool missing from a profile gets its variable unset, so it uses its default
 home. A tool kennel has no built-in variable for needs env = "...".
 Routes live beside the config in ~/.config/kennel/routes.
@@ -76,6 +86,8 @@ func run(args []string) int {
 			fmt.Print(usage)
 		}
 		return 0
+	case "hook":
+		return cmdHook(args[1:])
 	case "init":
 		if len(args) != 2 || args[1] != "zsh" {
 			return failf("usage: kennel init zsh")
@@ -114,6 +126,8 @@ func run(args []string) int {
 			return failf("usage: kennel share plan|apply|undo")
 		}
 		return cmdShare(cfg, args[1])
+	case "hooks":
+		return cmdHooks(cfg, args[1:])
 	case "doctor":
 		return cmdDoctor(cfg)
 	}
@@ -124,12 +138,9 @@ func run(args []string) int {
 // cmdInit prints the zsh hook. It calls this binary by absolute path so the
 // hook works before PATH is set up and in shells that change PATH.
 func cmdInit() int {
-	exe, err := os.Executable()
+	exe, err := selfPath()
 	if err != nil {
-		return failf("cannot find this binary's path: %v", err)
-	}
-	if real, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = real
+		return failf("%v", err)
 	}
 	q := shellQuote(exe)
 	// The wrapper repeats the eval rather than calling _kennel_apply: the
@@ -426,6 +437,25 @@ func cmdDoctor(cfg *Config) int {
 	}
 	for _, c := range shares {
 		note(c.state == linkOK, "%s %s", c.label, c.describe())
+	}
+
+	fmt.Println("Hooks")
+	if !cfg.Hooks.Codex && !cfg.Hooks.Pi {
+		fmt.Println("      (no [hooks] opt-in)")
+	} else if handlers, err := readClaudeHooks(cfg); err != nil {
+		note(false, "%v", err)
+	} else if exe, err := selfPath(); err != nil {
+		note(false, "%v", err)
+	} else if outs, err := planHooks(cfg, handlers, exe); err != nil {
+		note(false, "%v", err)
+	} else {
+		for _, o := range outs {
+			state := "is current"
+			if o.changed() {
+				state = "is out of date; run `kennel hooks apply`"
+			}
+			note(!o.changed(), "%s: %s %s", o.Target, tilde(o.Path), state)
+		}
 	}
 
 	fmt.Println("Routes")

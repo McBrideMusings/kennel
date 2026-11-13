@@ -1,0 +1,21 @@
+// Load the generated pi extension with pi's own jiti and fire its handlers.
+import { createRequire } from "node:module";
+const require = createRequire(process.env.PI_NM + "/jiti/package.json");
+const { createJiti } = require("jiti");
+const jiti = createJiti(import.meta.url);
+const mod = await jiti.import(process.argv[2]);
+const handlers = {};
+const notes = [];
+const pi = { on: (ev, fn) => (handlers[ev] = fn) };
+mod.default(pi);
+const ctx = { cwd: process.env.HOME + "/Projects/kennel", hasUI: false, ui: { notify: (m, l) => notes.push(l + ": " + m), confirm: async () => false } };
+await handlers.session_start({}, ctx);
+const deny = await handlers.tool_call({ toolName: "bash", input: { command: "git log @{u}" } }, ctx);
+console.log("brace refspec ->", JSON.stringify(deny).slice(0, 120));
+const ok = await handlers.tool_call({ toolName: "bash", input: { command: "ls" } }, ctx);
+console.log("ls ->", JSON.stringify(ok));
+const ask = await handlers.tool_call({ toolName: "bash", input: { command: "git commit -m \"x\n\nCo-Authored-By: Claude <noreply@anthropic.com>\"" } }, ctx);
+console.log("attribution ->", JSON.stringify(ask).slice(0, 120));
+const post = await handlers.tool_result({ toolName: "bash", input: { command: "ls" }, content: [{ type: "text", text: "a" }] }, ctx);
+console.log("tool_result ->", JSON.stringify(post));
+console.log("notes:", JSON.stringify(notes));

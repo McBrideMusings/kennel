@@ -6,11 +6,13 @@ description: "kennel: the cost scenario (kennel env latency on every cd) a diff 
 # kennel perf
 
 The zsh hook runs `kennel env` on every `cd` in every shell, so its time per call is a delay
-the user feels on each directory change. Nothing else kennel does runs often enough to matter.
+the user feels on each directory change. `kennel hook codex|pi` wraps every shared Claude hook
+on every Codex and pi tool call, so its added time lands on each of those calls.
 
 | Scenario | Command | Run for |
 | --- | --- | --- |
 | env latency | `bash .claude/skills/project-perf/tools/env-latency.sh [limit-ms]` | any diff to `main.go` `cmdEnv`, `routes.go`, `config.go` |
+| hook latency | `bash .claude/skills/project-perf/tools/hook-latency.sh [limit-ms]` | any diff to `hookrun.go`, `routes.go`, `config.go` |
 
 ## env latency
 
@@ -29,3 +31,15 @@ known-broken build (`KENNEL_BIN=<path>`) timed beside it; the limit sits between
 
 A run on a machine whose load average is over its core count (`sysctl -n vm.loadavg hw.ncpu`)
 is rerun once before a failure counts.
+
+## hook latency
+
+Fixture: a throwaway `HOME`, a one-tool config with 2000 routes, and a hook script that only
+reads its stdin. The script times 50 bare runs of the hook and 50 runs through
+`kennel hook codex --`, and prints the wrapper's added ms per call.
+
+| Measure | Limit | Today |
+| --- | --- | --- |
+| added ms per wrapped call, 2000 routes | none set | -79 (bare 214, wrapped 135), at load average 284 on 14 cores: noise |
+
+A limit gets set the same way as env latency's, from a run at load under the core count.

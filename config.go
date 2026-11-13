@@ -37,8 +37,16 @@ type Share struct {
 	Items  []string
 }
 
+// HooksOptIn says which tools get Claude's portable and adapter hooks.
+// Both off writes nothing.
+type HooksOptIn struct {
+	Codex bool `toml:"codex"`
+	Pi    bool `toml:"pi"`
+}
+
 type Config struct {
 	Path     string
+	Hooks    HooksOptIn
 	Shares   map[string]*Share
 	Tools    map[string]*Tool
 	Profiles map[string]map[string]string // profile → tool → home
@@ -58,6 +66,7 @@ type rawShare struct {
 }
 
 type rawConfig struct {
+	Hooks    HooksOptIn                   `toml:"hooks"`
 	Shares   map[string]rawShare          `toml:"shares"`
 	Tools    map[string]rawTool           `toml:"tools"`
 	Profiles map[string]map[string]string `toml:"profiles"`
@@ -118,7 +127,7 @@ func loadConfig() (*Config, error) {
 		return nil, fmt.Errorf("%s: unknown key %s", path, und[0])
 	}
 
-	cfg := &Config{Path: path, Tools: map[string]*Tool{}, Profiles: map[string]map[string]string{}, Shares: map[string]*Share{}}
+	cfg := &Config{Path: path, Hooks: raw.Hooks, Tools: map[string]*Tool{}, Profiles: map[string]map[string]string{}, Shares: map[string]*Share{}}
 	var problems []string
 	for name, rt := range raw.Tools {
 		t := &Tool{Name: name, Env: rt.Env, EnvSource: "config", Base: rt.Base, Shared: rt.Shared}
@@ -189,6 +198,12 @@ func loadConfig() (*Config, error) {
 			}
 		}
 		cfg.Shares[name] = s
+	}
+	if _, ok := cfg.Tools["claude"]; !ok && (cfg.Hooks.Codex || cfg.Hooks.Pi) {
+		problems = append(problems, "[hooks] needs a [tools.claude] block: Claude's settings.json and hooks/ live in its base")
+	}
+	if _, ok := cfg.Tools["codex"]; !ok && cfg.Hooks.Codex {
+		problems = append(problems, "[hooks] codex = true needs a [tools.codex] block: hooks.json lives in its base")
 	}
 	if len(problems) > 0 {
 		sort.Strings(problems)
