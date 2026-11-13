@@ -60,8 +60,8 @@ const configHelp = `Config: ~/.config/kennel/config.toml (KENNEL_CONFIG_DIR move
   [profiles.personal]           # no homes: every tool uses its own default
 
   [profiles.work]
-  claude = "~/.claude-work"
-  codex  = "~/.codex-work"
+  claude = "~/.claude-work"     # links the tool's shared items
+  codex  = { home = "~/.codex-work", shared = ["skills"] }   # its own list instead
 
   [shares.instructions]         # optional: one real file, linked from each path
   source = "~/.claude/AGENTS.md"
@@ -497,7 +497,7 @@ func cmdDoctor(cfg *Config) int {
 	}
 
 	fmt.Println("Symlinks")
-	checks := checkPairs(profilePairs(cfg, ""))
+	checks := append(checkPairs(profilePairs(cfg, "")), unsharedChecks(cfg, "")...)
 	if len(checks) == 0 {
 		fmt.Println("      (no profile has a home of its own)")
 	}

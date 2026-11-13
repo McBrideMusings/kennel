@@ -141,4 +141,16 @@ check "vault commit names the harness and session" bash -c "'$BIN' vault commit 
 check "vault add refuses a link" bash -c "! '$BIN' vault add '$S/.claude/skills/recomp' 2>/dev/null"
 check "vault add logged" grep -q 'vault add: linked .*/.claude/skills/recomp -> ' "$S/.local/state/kennel/kennel.log"
 
+cp "$KENNEL_CONFIG_DIR/config.toml" "$S/config.profiles"
+printf '[profiles.solo]\nclaude = { home = "~/.claude-solo", shared = ["skills"] }\n' >> "$KENNEL_CONFIG_DIR/config.toml"
+check "a profile's own shared list links only its items" bash -c "'$BIN' link && test -L '$S/.claude-solo/skills' && ! test -e '$S/.claude-solo/CLAUDE.md' && test -L '$S/.claude-work/CLAUDE.md'"
+(cd "$S/Work" && "$BIN" env > "$S/env.strings")
+sed -i '' 's|^claude = "~/.claude-work"$|claude = { home = "~/.claude-work", shared = ["skills"] }|' "$KENNEL_CONFIG_DIR/config.toml"
+check "kennel env is byte-identical with the table form" bash -c "cd '$S/Work' && '$BIN' env | cmp -s - '$S/env.strings'"
+check "link reports an item the profile stopped sharing and leaves it" bash -c "'$BIN' link | grep -q '^unshared  not shared by \[profiles.work\]: ~/.claude-work/CLAUDE.md → ~/.claude/CLAUDE.md' ; ! '$BIN' link >/dev/null && test \"\$(readlink '$S/.claude-work/CLAUDE.md')\" = '$S/.claude/CLAUDE.md'"
+check "doctor fails on it" bash -c "cd '$S/Work' && '$BIN' doctor | grep -q '^FAIL  work/claude unshared  not shared by \[profiles.work\]'"
+printf '[profiles.bad]\ncodex = { home = "~/.codex-bad" }\n' >> "$KENNEL_CONFIG_DIR/config.toml"
+check "a profile table missing shared fails to load naming it" bash -c "'$BIN' which 2>&1 | grep -q '\[profiles.bad\] codex needs both' && ! '$BIN' which >/dev/null 2>&1"
+cp "$S/config.profiles" "$KENNEL_CONFIG_DIR/config.toml"
+
 [ "$fails" -eq 0 ]
