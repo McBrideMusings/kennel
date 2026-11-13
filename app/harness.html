@@ -6,10 +6,10 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:">
 <title>kennel</title>
 <style>
-:root{--bg:#f6f6f4;--surface:#fff;--ink:#1c1c1a;--soft:#5d5d58;--line:#e2e2dd;--tint:#efefeb;--acc:#2f5fd0;--acc-t:#e8eefb;
+:root{--bg:#f6f6f4;--surface:#fff;--ink:#1c1c1a;--soft:#5d5d58;--line:#e2e2dd;--tint:#efefeb;--acc:#2f5fd0;--acc-t:#e8eefb;--ok:#1d7a3e;--ok-t:#e3f3e8;--warn:#9a5b00;--warn-t:#fbf0dc;--bad:#b42318;--bad-t:#fbe6e4;
 --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;--mono:ui-monospace,"SF Mono",Menlo,monospace;color-scheme:light}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#161615;--surface:#1f1f1d;--ink:#ecece8;--soft:#a3a39c;--line:#33332f;--tint:#282825;--acc:#86a8f5;--acc-t:#22304f;color-scheme:dark}}
-:root[data-theme="dark"]{--bg:#161615;--surface:#1f1f1d;--ink:#ecece8;--soft:#a3a39c;--line:#33332f;--tint:#282825;--acc:#86a8f5;--acc-t:#22304f;color-scheme:dark}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#161615;--surface:#1f1f1d;--ink:#ecece8;--soft:#a3a39c;--line:#33332f;--tint:#282825;--acc:#86a8f5;--acc-t:#22304f;--ok:#7fd49b;--ok-t:#1d3326;--warn:#f0bd6a;--warn-t:#3a2e17;--bad:#f59a8f;--bad-t:#3d211e;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#161615;--surface:#1f1f1d;--ink:#ecece8;--soft:#a3a39c;--line:#33332f;--tint:#282825;--acc:#86a8f5;--acc-t:#22304f;--ok:#7fd49b;--ok-t:#1d3326;--warn:#f0bd6a;--warn-t:#3a2e17;--bad:#f59a8f;--bad-t:#3d211e;color-scheme:dark}
 html,body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 var(--sans)}
 .app{display:grid;grid-template-rows:44px 1fr;height:720px;width:100%;overflow:hidden}
 .top{display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid var(--line);background:var(--surface)}
@@ -75,6 +75,15 @@ button:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--acc);outli
 .doc a{color:var(--acc)}
 .doc hr{border:0;border-top:1px solid var(--line);margin:14px 0}
 .err{color:var(--soft);font:12px var(--mono);white-space:pre-wrap}
+.gv .doc{position:relative}
+.doc mark.hl{display:inline-block;min-width:100%;background:var(--acc-t);color:inherit}
+.gv .f .cnt{margin-left:auto;padding-left:8px;color:var(--soft);font:12px var(--sans);font-variant-numeric:tabular-nums;font-weight:400}
+.gen{display:inline-flex;margin-left:5px;color:var(--acc);flex:none}
+.gv .f.bad .nm{color:var(--bad)}
+.gv .f.wrap .nm{white-space:normal;overflow-wrap:anywhere}
+.gv .hist{overflow-x:hidden}.gv .c{overflow-wrap:anywhere}
+.dec{font:600 11px var(--sans);padding:1px 7px;border-radius:4px;background:var(--tint);color:var(--soft)}
+.dec.allow{background:var(--ok-t);color:var(--ok)}.dec.ask{background:var(--warn-t);color:var(--warn)}.dec.deny{background:var(--bad-t);color:var(--bad)}
 </style>
 </head>
 <body>
@@ -95,7 +104,7 @@ button:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--acc);outli
     </span>
   </div>
   <div class="body">
-    <nav class="side nav" aria-label="Sections"><h3>Harness</h3><a href="#" class="on"><span>Skills</span><span class="n" id="n-skills"></span></a></nav>
+    <nav class="side nav" aria-label="Sections"><h3>Harness</h3><a href="#" data-sec="skills"><span>Skills</span><span class="n" id="n-skills"></span></a><a href="#" data-sec="guidance"><span>Guidance</span><span class="n" id="n-guidance"></span></a><a href="#" data-sec="permissions"><span>Permissions</span><span class="n" id="n-permissions"></span></a><a href="#" data-sec="hooks"><span>Hooks</span><span class="n" id="n-hooks"></span></a><a href="#" data-sec="mcp"><span>MCP servers</span><span class="n" id="n-mcp"></span></a></nav>
     <main class="main"><div class="gv">
       <div class="files" id="tree" role="tree" aria-label="Skills"></div>
       <div class="doc" id="doc"></div>
@@ -152,13 +161,17 @@ async function kennel(...args) {
 const kennelJSON = async (...args) => JSON.parse(await kennel(...args, "--json"));
 
 // ---- state ----
+const SECTIONS = {skills: "Skills", guidance: "Guidance", permissions: "Permissions", hooks: "Hooks", mcp: "MCP servers"};
 const S = {
   scope: "global",   // "global" or a directory
   harness: "claude",
   project: null,     // the directory the project segment names
-  show: null,        // harness show skills
-  open: new Set(),   // open folders: "<skill path>" or "<skill path>/<dir>"
-  file: null,        // selected file's absolute path
+  section: "skills",
+  shows: {},         // harness show <section> per section, or {error}
+  open: new Set(),   // open folders and groups, by key
+  items: new Map(),  // tree key -> {file, find}: the file a row opens, and the line to mark in it
+  sel: null,         // selected tree key
+  file: null, find: null,
   commits: [], rev: null,
   recent: [],
 };
@@ -170,32 +183,30 @@ function onToolInput(a) {
 }
 function onToolResult(r) {
   if (r.isError) { showError((r.content || []).map(c => c.text).join("")); return; }
-  if (r.structuredContent && loadSeq === 0) setShow(r.structuredContent); // a pick made before it arrived wins
+  if (r.structuredContent && loadSeq === 0) { setScope(r.structuredContent); load(); } // a pick made before it arrived wins
 }
 
 // Each load and file pick takes a number; a reply for an older one is dropped.
+// A load reads every section, so the counts are whole and every file a page
+// opens has been listed by a harness show first.
 let loadSeq = 0, fileSeq = 0;
 async function load() {
   const seq = ++loadSeq;
   renderTop();
-  try {
-    const show = await kennelJSON("harness", "show", "skills", "--scope", S.scope, "--harness", S.harness);
-    if (seq === loadSeq) setShow(show);
-  } catch (e) { if (seq === loadSeq) showError(e.message); }
+  const names = Object.keys(SECTIONS);
+  const got = await Promise.allSettled(names.map(s => kennelJSON("harness", "show", s, "--scope", S.scope, "--harness", S.harness)));
+  if (seq !== loadSeq) return;
+  S.shows = {};
+  got.forEach((g, i) => S.shows[names[i]] = g.status === "fulfilled" ? g.value : {error: g.reason.message});
+  const ok = got.find(g => g.status === "fulfilled");
+  if (ok) setScope(ok.value);
+  renderTop(); renderCounts(); openPage();
 }
-
-function setShow(show) {
-  S.show = show; S.harness = show.harness;
+function setScope(show) {
+  S.harness = show.harness;
   if (show.scope.kind === "project") { S.scope = show.scope.dir; S.project = show.scope.root; }
   else S.scope = "global";
-  const first = firstSkill();
-  S.open = new Set(first ? [first.path] : []);
-  S.file = null;
-  renderTop(); renderCounts();
-  if (first && first.files.length) selectFile(first.path + "/" + (first.files.includes("SKILL.md") ? "SKILL.md" : first.files[0]));
-  else { fileSeq++; renderTree(); $("doc").innerHTML = ""; $("hist").innerHTML = ""; }
 }
-const firstSkill = () => { for (const b of S.show.blocks) if (b.entries.length) return b.entries[0]; return null; };
 function showError(msg) { $("doc").innerHTML = '<div class="err">' + esc(msg) + "</div>"; }
 
 // ---- top bar ----
@@ -211,12 +222,15 @@ function renderTop() {
   });
 }
 function renderCounts() {
-  const n = S.show.blocks.map(b => b.entries.length);
-  $("n-skills").textContent = n.join(" + ");
+  for (const s of Object.keys(SECTIONS)) {
+    const show = S.shows[s];
+    $("n-" + s).textContent = show && show.blocks ? show.blocks.map(b => b.entries.length).join(" + ") : "";
+  }
 }
 
 $("global").onclick = () => { S.scope = "global"; load(); };
 document.querySelectorAll("[data-h]").forEach(b => b.onclick = () => { S.harness = b.dataset.h; load(); });
+document.querySelectorAll("[data-sec]").forEach(a => a.onclick = e => { e.preventDefault(); if (S.section !== a.dataset.sec) { S.section = a.dataset.sec; openPage(); } });
 
 // ---- project picker ----
 $("project").onclick = async () => {
@@ -245,8 +259,57 @@ $("recent").onclick = e => { const b = e.target.closest(".it"); if (b) openDir(b
 $("choose").onclick = () => { $("filter").value = "~/"; renderRecent(); $("filter").focus(); };
 document.addEventListener("mousedown", e => { if (!e.target.closest(".pick")) $("dd").hidden = true; });
 
+// ---- page ----
+// openPage shows the current section: its tree, then its first row's file.
+function openPage() {
+  document.querySelectorAll("[data-sec]").forEach(a => {
+    a.className = a.dataset.sec === S.section ? "on" : "";
+    a.toggleAttribute("aria-current", a.dataset.sec === S.section);
+  });
+  $("tree").setAttribute("aria-label", SECTIONS[S.section]);
+  fileSeq++;
+  S.sel = S.file = S.find = S.rev = null; S.commits = [];
+  $("doc").innerHTML = ""; renderHist();
+  const show = S.shows[S.section];
+  if (!show) { $("tree").innerHTML = ""; return; }
+  if (show.error) { $("tree").innerHTML = ""; showError(show.error); return; }
+  S.open = defaultOpen(show);
+  renderTree();
+  const first = $("tree").querySelector("[data-key]");
+  if (first) select(first.dataset.key);
+}
+// defaultOpen opens the first skill, and on Hooks and Permissions the groups
+// of the block the scope names, leaving the inherited Global block closed.
+function defaultOpen(show) {
+  const open = new Set();
+  if (S.section === "skills") {
+    const b = show.blocks.find(b => b.entries.length);
+    if (b) open.add(b.entries[0].path);
+  }
+  if (S.section === "hooks" || S.section === "permissions") {
+    for (const b of show.blocks) if (b.scope === show.scope.kind)
+      for (const g of groups(b)) open.add(b.scope + ":" + g.name);
+  }
+  return open;
+}
+// groups splits a Hooks block by event, most hooks first, or a Permissions
+// block by decision.
+const DECISIONS = ["allow", "ask", "deny"];
+function groups(b) {
+  const by = new Map();
+  b.entries.forEach((e, i) => {
+    const k = S.section === "hooks" ? e.event : e.decision;
+    if (!by.has(k)) by.set(k, []);
+    by.get(k).push([e, i]);
+  });
+  const gs = [...by].map(([name, entries]) => ({name, entries}));
+  if (S.section === "hooks") return gs.sort((a, b) => b.entries.length - a.entries.length);
+  const rank = d => DECISIONS.includes(d) ? DECISIONS.indexOf(d) : DECISIONS.length;
+  return gs.sort((a, b) => rank(a.name) - rank(b.name));
+}
+
 // ---- tree ----
-// A skill's files as nested folders: SKILL.md first, then folders, then files.
+// nest turns relative file paths into nested folders.
 function nest(files) {
   const root = {dirs: {}, files: []};
   for (const f of files) {
@@ -256,40 +319,102 @@ function nest(files) {
   }
   return root;
 }
+const countFiles = n => n.files.length + Object.values(n.dirs).reduce((s, d) => s + countFiles(d), 0);
+const CLAUDE_MARK = () => `<span class="gen" role="img" aria-label="From Claude's hooks" title="From Claude's hooks"><svg width="11" height="11" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="${esc(document.querySelector('[data-h="claude"] path').getAttribute("d"))}"/></svg></span>`;
+
+// Lines to mark: a permission rule, an MCP server or an inline hook command
+// in the settings file that holds it. The mark goes on the first matching
+// line after the anchor (the rule's decision key, the hook's event), so a
+// rule under both allow and deny marks the right one.
+const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const findRule = e => e.decision === "setting"
+  ? {match: (k => line => new RegExp("^\\s*" + reEsc(k) + "\\s*=").test(line))(e.rule.split(" = ")[0])}
+  : {anchor: JSON.stringify(e.decision) + ":", match: line => line.includes(JSON.stringify(e.rule))};
+const findServer = name => {
+  const toml = new RegExp("^\\s*\\[mcp_servers\\.(" + reEsc(name) + "|" + reEsc(JSON.stringify(name)) + ")\\]");
+  return {match: line => line.includes(JSON.stringify(name) + ":") || toml.test(line)};
+};
+const findCommand = e => e.command ? {anchor: JSON.stringify(e.event), match: line => line.includes(JSON.stringify(e.command).slice(1, -1))} : null;
+// markLine is the index of the line find marks, or -1.
+function markLine(lines, find) {
+  if (!find) return -1;
+  const from = find.anchor ? lines.findIndex(l => l.includes(find.anchor)) : -1;
+  const after = lines.findIndex((l, i) => i >= from && find.match(l));
+  return after >= 0 ? after : lines.findIndex(find.match);
+}
+
 function renderTree() {
-  const out = [];
-  const row = (cls, depth, tw, name, attrs) =>
-    out.push(`<button class="f ${cls}" style="padding-left:${8 + depth * 14}px" ${attrs}><span class="tw">${tw}</span><span class="nm">${name}</span></button>`);
-  const walk = (node, path, depth) => {
-    const files = node.files.slice().sort((a, b) => (a === "SKILL.md" ? -1 : b === "SKILL.md" ? 1 : a.localeCompare(b)));
-    if (files[0] === "SKILL.md") { emitFile(files.shift()); }
-    function emitFile(f) {
-      const p = path + "/" + f;
-      row(S.file === p ? "on" : "", depth, "", esc(f), `role="treeitem" data-file="${esc(p)}"`);
-    }
-    for (const d of Object.keys(node.dirs).sort()) {
-      const p = path + "/" + d, open = S.open.has(p);
-      row("dir", depth, open ? "▾" : "▸", esc(d), `role="treeitem" aria-expanded="${open}" data-dir="${esc(p)}"`);
-      if (open) walk(node.dirs[d], p, depth + 1);
-    }
-    files.forEach(emitFile);
+  const show = S.shows[S.section], out = [];
+  S.items = new Map();
+  const row = (cls, depth, tw, name, attrs, after = "") =>
+    out.push(`<button class="f ${cls}" style="padding-left:${8 + depth * 14}px" ${attrs}><span class="tw">${tw}</span><span class="nm">${name}</span>${after}</button>`);
+  const folder = (key, depth, name, count) => {
+    const open = S.open.has(key);
+    row("dir", depth, open ? "▾" : "▸", name, `role="treeitem" aria-expanded="${open}" data-dir="${esc(key)}"`, count === undefined ? "" : `<span class="cnt">${count}</span>`);
+    return open;
   };
-  for (const b of S.show.blocks) {
-    out.push(`<div class="grp"><span class="tag ${b.scope === "project" ? "p" : "g"}">${b.scope === "project" ? "Project" : "Global"}</span></div>`);
-    for (const s of b.entries) {
-      const open = S.open.has(s.path);
-      const name = s.vault ? `<span class="vlt">${esc(s.name)}${VAULT_ICON}</span>` : esc(s.name);
-      row("dir", 0, open ? "▾" : "▸", name, `role="treeitem" aria-expanded="${open}" data-dir="${esc(s.path)}"`);
-      if (open) walk(nest(s.files), s.path, 1);
+  const leaf = (key, depth, name, item, after = "", title = "", cls = "") => {
+    S.items.set(key, item);
+    row((S.sel === key ? "on " : "") + cls, depth, "", name, `role="treeitem" data-key="${esc(key)}"${title ? ` title="${esc(title)}"` : ""}`, after);
+  };
+
+  // a skill's files: SKILL.md first, then folders, then files
+  const walkSkill = (node, path, depth) => {
+    const files = node.files.slice().sort((a, b) => (a === "SKILL.md" ? -1 : b === "SKILL.md" ? 1 : a.localeCompare(b)));
+    const file = f => leaf(path + "/" + f, depth, esc(f), {file: path + "/" + f});
+    if (files[0] === "SKILL.md") file(files.shift());
+    for (const d of Object.keys(node.dirs).sort())
+      if (folder(path + "/" + d, depth, esc(d))) walkSkill(node.dirs[d], path + "/" + d, depth + 1);
+    files.forEach(file);
+  };
+  // guidance: files first, the harness's own file leading, then folders with
+  // their file counts; a folder holding only one folder joins its name
+  const main = f => f === "CLAUDE.md" || f === "AGENTS.md";
+  const walkGuidance = (node, path, depth) => {
+    node.files.slice().sort((a, b) => main(b) - main(a) || (a < b ? -1 : a > b ? 1 : 0))
+      .forEach(f => leaf(path + "/" + f, depth, esc(f), {file: path + "/" + f}));
+    for (let d of Object.keys(node.dirs).sort()) {
+      let n = node.dirs[d], name = d;
+      while (!n.files.length && Object.keys(n.dirs).length === 1) { const k = Object.keys(n.dirs)[0]; name += "/" + k; n = n.dirs[k]; }
+      if (folder(path + "/" + name + "/", depth, esc(name + "/"), countFiles(n))) walkGuidance(n, path + "/" + name, depth + 1);
     }
+  };
+
+  for (const b of show.blocks) {
+    out.push(`<div class="grp"><span class="tag ${b.scope === "project" ? "p" : "g"}">${b.scope === "project" ? "Project" : "Global"}</span></div>`);
+    if (S.section === "skills") for (const s of b.entries) {
+      const name = s.vault ? `<span class="vlt">${esc(s.name)}${VAULT_ICON}</span>` : esc(s.name);
+      if (folder(s.path, 0, name)) walkSkill(nest(s.files), s.path, 1);
+    }
+    if (S.section === "guidance") walkGuidance(nest(b.entries.map(e => e.rel)), b.path, 0);
+    if (S.section === "hooks") for (const g of groups(b)) {
+      if (!folder(b.scope + ":" + g.name, 0, esc(g.name), g.entries.length)) continue;
+      for (const [e, i] of g.entries) {
+        const words = (e.command || "").trim().split(/\s+/);
+        const name = e.script ? base(e.script) : words[0] + (words.length > 1 ? " …" : "");
+        leaf(b.scope + ":" + i, 1, esc(name || e.event), e.script ? {file: e.script} : {file: e.file, find: findCommand(e)},
+          e.generated ? CLAUDE_MARK() : "", e.problem || e.command, e.problem ? "wrap bad" : "wrap");
+      }
+    }
+    if (S.section === "permissions") for (const g of groups(b)) {
+      if (!folder(b.scope + ":" + g.name, 0, `<span class="dec ${esc(g.name)}">${esc(g.name)}</span>`, g.entries.length)) continue;
+      for (const [e, i] of g.entries) leaf(b.scope + ":" + i, 1, esc(e.rule), {file: e.file, find: findRule(e)}, "", e.rule);
+    }
+    if (S.section === "mcp") b.entries.forEach((e, i) =>
+      leaf(b.scope + ":" + i, 0, esc(e.name), {file: e.file, find: findServer(e.name)}));
   }
   $("tree").innerHTML = out.join("");
 }
 $("tree").onclick = e => {
   const b = e.target.closest(".f"); if (!b) return;
   if (b.dataset.dir) { const d = b.dataset.dir; S.open.has(d) ? S.open.delete(d) : S.open.add(d); renderTree(); }
-  else selectFile(b.dataset.file);
+  else select(b.dataset.key);
 };
+function select(key) {
+  const it = S.items.get(key); if (!it) return;
+  S.sel = key; S.find = it.find || null;
+  selectFile(it.file);
+}
 
 // ---- reader and commits ----
 async function selectFile(path) {
@@ -345,10 +470,14 @@ function renderDoc(path, text) {
   if (/\.(md|markdown)$/i.test(path)) {
     const {desc, body} = frontmatter(text);
     doc.innerHTML = (desc ? `<div class="fm">${esc(desc)}</div>` : "") + clean(marked.parse(body));
+    doc.scrollTop = 0;
   } else {
-    doc.innerHTML = `<pre class="code">${esc(text)}</pre>`;
+    // a settings file marks the line that holds the selected entry
+    const lines = text.split("\n"), hit = markLine(lines, S.find);
+    doc.innerHTML = `<pre class="code">${lines.map((l, i) => i === hit ? `<mark class="hl">${esc(l)}</mark>` : esc(l)).join("\n")}</pre>`;
+    const m = doc.querySelector(".hl");
+    doc.scrollTop = m ? Math.max(0, m.offsetTop - 60) : 0;
   }
-  doc.scrollTop = 0;
 }
 $("doc").addEventListener("click", e => {
   const a = e.target.closest("a[href]"); if (!a) return;

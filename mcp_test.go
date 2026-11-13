@@ -167,6 +167,32 @@ func TestMCPKennelToolRunsOnlyReadCommands(t *testing.T) {
 	}
 }
 
+// The Permissions, Hooks and MCP servers pages open the file each entry
+// names, which their harness show listed.
+func TestMCPKennelToolReadsEntryFiles(t *testing.T) {
+	h, proj := harnessSandbox(t)
+	cs := mcpSession(t)
+	pages := []struct{ section, file, want string }{
+		{"permissions", filepath.Join(proj, ".claude", "settings.json"), "git push"},
+		{"hooks", filepath.Join(proj, ".claude", "hooks", "stop.sh"), "#!/bin/bash"},
+		{"mcp", filepath.Join(proj, ".mcp.json"), "playwright"},
+		{"mcp", filepath.Join(h, ".claude-work", ".claude.json"), "qmd"},
+	}
+	shown := map[string]bool{}
+	for _, p := range pages {
+		if r := callTool(t, cs, "kennel", map[string]any{"args": []string{"file", "show", p.file}}); !shown[p.section] && !r.IsError {
+			t.Fatalf("file show %s before harness show %s = %q", p.file, p.section, toolText(r))
+		}
+		if r := callTool(t, cs, "kennel", map[string]any{"args": []string{"harness", "show", p.section, "--scope", proj, "--json"}}); r.IsError {
+			t.Fatalf("harness show %s: %s", p.section, toolText(r))
+		}
+		shown[p.section] = true
+		if r := callTool(t, cs, "kennel", map[string]any{"args": []string{"file", "show", p.file}}); r.IsError || !strings.Contains(toolText(r), p.want) {
+			t.Fatalf("file show %s after harness show %s = %v %q", p.file, p.section, r.IsError, toolText(r))
+		}
+	}
+}
+
 func TestHarnessRecent(t *testing.T) {
 	h, proj := harnessSandbox(t)
 	t.Setenv("TMPDIR", filepath.Join(h, "tmp")) // the sandbox itself lives in the real temp folder
