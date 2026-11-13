@@ -461,3 +461,55 @@ func TestShareAddRmRefusals(t *testing.T) {
 		t.Fatalf("a refused command changed the config:\n%s", after)
 	}
 }
+
+// A path two shares claim would follow whichever share sorts first and leave
+// the other's undo unable to find it, so loadConfig names both and the path.
+func TestShareOverlapRejected(t *testing.T) {
+	for _, c := range []struct{ name, toml, want string }{
+		{"two file shares", fileShare + "[shares.j]\nsource = \"~/src/CLAUDE.md\"\nlinks = [\"~/b/AGENTS.md\"]\n",
+			"[shares.i] and [shares.j] both link ~/b/AGENTS.md"},
+		{"two folder shares, one item", folderShare + "[shares.t]\nsource = \"~/other\"\ninto = \"~/dst\"\nitems = [\"keep\"]\n",
+			"[shares.s] and [shares.t] both link ~/dst/keep"},
+		{"file link on a folder item", folderShare + "[shares.f]\nsource = \"~/src/AGENTS.md\"\nlinks = [\"~/dst/keep/\"]\n",
+			"[shares.f] and [shares.s] both link ~/dst/keep"},
+		{"one share twice", "[shares.i]\nsource = \"~/src/AGENTS.md\"\nlinks = [\"~/a/AGENTS.md\", \"~/a/../a/AGENTS.md\"]\n",
+			"[shares.i] lists ~/a/AGENTS.md twice"},
+		{"one item twice", "[shares.s]\nsource = \"~/src/skills\"\ninto = \"~/dst\"\nitems = [\"keep\", \"keep\"]\n",
+			"[shares.s] lists ~/dst/keep twice"},
+		{"different items in one into", folderShare + "[shares.t]\nsource = \"~/other\"\ninto = \"~/dst\"\nitems = [\"other\"]\n", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, _, err := shareSandbox(t, c.toml)
+			if c.want == "" {
+				if err != nil {
+					t.Fatalf("loadConfig rejected a valid config: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("loadConfig error = %v, want it to contain %q", err, c.want)
+			}
+		})
+	}
+}
+
+// share add onto a path another share already links puts the config back
+// and exits 1, since the edited config no longer loads.
+func TestShareAddOverlapRestoresConfig(t *testing.T) {
+	h, cfg, err := shareSandbox(t, fileShare+"[shares.j]\nsource = \"~/src/CLAUDE.md\"\nlinks = [\"~/c/CLAUDE.md\"]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(h, "src"), 0o755)
+	os.WriteFile(filepath.Join(h, "src", "CLAUDE.md"), []byte("x"), 0o644)
+	before, _ := os.ReadFile(configPath())
+	if out, code := quiet(t, func() int { return cmdShareEdit(cfg, "add", []string{"j", "--link", "~/a/AGENTS.md"}) }); code != 1 {
+		t.Fatalf("add of a claimed path exited %d, want 1:\n%s", code, out)
+	}
+	if after, _ := os.ReadFile(configPath()); string(after) != string(before) {
+		t.Fatalf("config changed:\n%s", after)
+	}
+	if exists(filepath.Join(h, "a", "AGENTS.md")) {
+		t.Fatal("add made a link for a refused entry")
+	}
+}

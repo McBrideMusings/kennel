@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -170,7 +171,9 @@ func loadConfig() (*Config, error) {
 			cfg.Profiles[prof][tool] = h
 		}
 	}
+	broken := map[string]bool{} // shares with a problem of their own sit out the overlap check
 	for name, rs := range raw.Shares {
+		before := len(problems)
 		isFile := md.IsDefined("shares", name, "links")
 		isFolder := md.IsDefined("shares", name, "into") || md.IsDefined("shares", name, "items")
 		if rs.Source == "" {
@@ -199,6 +202,30 @@ func loadConfig() (*Config, error) {
 			}
 		}
 		cfg.Shares[name] = s
+		broken[name] = len(problems) > before
+	}
+	// Each link path belongs to one share, listed once: a second claim would
+	// leave apply, undo and doctor following whichever share sorted first.
+	claimed := map[string]string{}
+	for _, name := range cfg.shareNames() {
+		if broken[name] {
+			continue
+		}
+		s := cfg.Shares[name]
+		paths := slices.Clone(s.Links)
+		for _, item := range s.Items {
+			paths = append(paths, filepath.Join(s.Into, item))
+		}
+		for _, p := range paths {
+			switch owner, ok := claimed[p]; {
+			case !ok:
+				claimed[p] = name
+			case owner == name:
+				problems = append(problems, fmt.Sprintf("[shares.%s] lists %s twice", name, tilde(p)))
+			default:
+				problems = append(problems, fmt.Sprintf("[shares.%s] and [shares.%s] both link %s; one path takes one share", owner, name, tilde(p)))
+			}
+		}
 	}
 	if _, ok := cfg.Tools["claude"]; !ok && (cfg.Hooks.Codex || cfg.Hooks.Pi) {
 		problems = append(problems, "[hooks] needs a [tools.claude] block: Claude's settings.json and hooks/ live in its base")

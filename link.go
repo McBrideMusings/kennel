@@ -76,24 +76,18 @@ func profilePairs(cfg *Config, only string) []pair {
 	return out
 }
 
-// sharePairs lists every link the [shares] table asks for.
+// sharePairs lists every link the [shares] table asks for. loadConfig has
+// already rejected a path claimed twice, so each path appears once.
 func sharePairs(cfg *Config) []pair {
 	var out []pair
-	seen := map[string]bool{}
-	add := func(p pair) {
-		if !seen[p.path] {
-			seen[p.path] = true
-			out = append(out, p)
-		}
-	}
 	for _, name := range cfg.shareNames() {
 		s := cfg.Shares[name]
 		label := "share " + name
 		for _, l := range s.Links {
-			add(pair{label: label, path: l, target: s.Source})
+			out = append(out, pair{label: label, path: l, target: s.Source})
 		}
 		for _, item := range s.Items {
-			add(pair{label: label, path: filepath.Join(s.Into, item), target: filepath.Join(s.Source, item)})
+			out = append(out, pair{label: label, path: filepath.Join(s.Into, item), target: filepath.Join(s.Source, item)})
 		}
 	}
 	return out

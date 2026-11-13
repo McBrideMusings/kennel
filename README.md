@@ -69,7 +69,8 @@ items  = ["diagnose", "research"]
 ```
 
 A share has `source` and either `links` or `into` and `items`, never both. Each item is one
-name with no `/`.
+name with no `/`. One link path belongs to one share: `kennel` refuses a config where two
+shares link the same path, or one share lists a path twice.
 
 | Command | Does |
 | --- | --- |
