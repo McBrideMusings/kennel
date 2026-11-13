@@ -53,18 +53,22 @@ func cmdHook(args []string) int {
 	if err != nil {
 		return failClosed(target, "%v", err)
 	}
-	env := hookEnv(cfg, str(payload["cwd"]))
+	env := hookEnv(cfg, target, str(payload["cwd"]))
 	if target == "codex" {
 		return hookCodex(payload, argv, env)
 	}
 	return hookPi(payload, argv, env)
 }
 
-// hookEnv sets CLAUDE_PROJECT_DIR to the session's directory and CLAUDE_HOME
-// to the Claude home kennel routes that directory to; Codex and pi set
-// neither.
-func hookEnv(cfg *Config, cwd string) []string {
-	env := os.Environ()
+// hookEnv sets KENNEL_HARNESS to the tool running the hook, KENNEL_BIN to
+// this binary (so a hook reaches kennel when PATH lacks it), CLAUDE_PROJECT_DIR
+// to the session's directory and CLAUDE_HOME to the Claude home kennel routes
+// that directory to; Codex and pi set neither.
+func hookEnv(cfg *Config, target, cwd string) []string {
+	env := append(os.Environ(), "KENNEL_HARNESS="+target)
+	if exe, err := selfPath(); err == nil {
+		env = append(env, "KENNEL_BIN="+exe)
+	}
 	if cwd == "" {
 		return env
 	}

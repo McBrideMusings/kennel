@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +23,7 @@ const vaultUsage = `usage:
   kennel vault unlink <path>                            replace a link to a vault item with a recorded copy
   kennel vault ls [--json]                              the vault's skills and snippets, and each recorded copy
   kennel vault commit --session <id> --harness <h> <file>   commit one vault file an agent edited
+  kennel vault hook                                     the edit hook: commit the file a PostToolUse payload on stdin names, when it is in the vault
   kennel vault log <item>                               the item's commits
   kennel vault show <item>[@<rev>]                      the item's files at a commit`
 
@@ -44,11 +47,17 @@ func dataDir() string {
 	return filepath.Join(home(), ".local", "share", "kennel")
 }
 
+// vaultAt is the vault's place on disk; it creates nothing.
+func vaultAt() *vault {
+	base := dataDir()
+	return &vault{dir: filepath.Join(base, "vault"), gitDir: filepath.Join(base, "vault.git")}
+}
+
 // openVault returns the vault, creating the folder and its repository with a
 // first commit on first use.
 func openVault() (*vault, error) {
 	base := dataDir()
-	v := &vault{dir: filepath.Join(base, "vault"), gitDir: filepath.Join(base, "vault.git")}
+	v := vaultAt()
 	if err := os.MkdirAll(v.dir, 0o755); err != nil {
 		return nil, err
 	}
@@ -171,6 +180,9 @@ func (v *vault) item(arg string) (string, error) {
 func cmdVault(args []string) int {
 	if len(args) == 0 {
 		return failf(vaultUsage)
+	}
+	if args[0] == "hook" {
+		return vaultHook(args[1:])
 	}
 	v, err := openVault()
 	if err != nil {
@@ -446,6 +458,60 @@ func vaultCommit(v *vault, args []string) int {
 	return 0
 }
 
+// vaultHook is the PostToolUse hook on Edit, Write and MultiEdit. It reads
+// the Claude-shaped payload on stdin and, when tool_input.file_path (relative
+// to cwd when not absolute) resolves inside the vault, commits it as
+// vaultCommit does, naming the payload's session_id ("unknown" when absent)
+// and the harness `kennel hook` set in KENNEL_HARNESS (claude when unset).
+// Every edit in every session runs it, so a file outside the vault returns
+// before the vault is opened, locked or created; so does an empty payload,
+// as `kennel hook` reads one.
+func vaultHook(args []string) int {
+	if len(args) != 0 {
+		return failf("usage: kennel vault hook (reads a PostToolUse payload on stdin)")
+	}
+	in, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return failf("read the hook payload: %v", err)
+	}
+	var p struct {
+		SessionID string `json:"session_id"`
+		Cwd       string `json:"cwd"`
+		ToolInput struct {
+			FilePath string `json:"file_path"`
+		} `json:"tool_input"`
+	}
+	if len(bytes.TrimSpace(in)) == 0 {
+		return 0
+	}
+	if err := json.Unmarshal(in, &p); err != nil {
+		return failf("hook payload is not JSON: %v", err)
+	}
+	file := p.ToolInput.FilePath
+	if file == "" {
+		return 0
+	}
+	if !filepath.IsAbs(file) && p.Cwd != "" {
+		file = filepath.Join(p.Cwd, file)
+	}
+	if _, err := vaultAt().relPath(file); err != nil {
+		return 0
+	}
+	harness := os.Getenv("KENNEL_HARNESS")
+	if harness == "" {
+		harness = "claude"
+	}
+	session := p.SessionID
+	if session == "" {
+		session = "unknown"
+	}
+	v, err := openVault()
+	if err != nil {
+		return failf("%v", err)
+	}
+	return vaultCommit(v, []string{"--session", session, "--harness", harness, file})
+}
+
 // relPath turns a file path, which may run through a link into the vault,
 // into its path relative to the vault folder.
 func (v *vault) relPath(file string) (string, error) {
@@ -454,14 +520,18 @@ func (v *vault) relPath(file string) (string, error) {
 		return "", err
 	}
 	// A snippet's link is the file itself; a gone file resolves through its
-	// folder.
+	// nearest folder still on disk, so a deleted file in a deleted folder of
+	// the vault still names its vault path.
 	p, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		dir, derr := filepath.EvalSymlinks(filepath.Dir(abs))
-		if derr != nil {
-			return "", derr
+	for dir, rest := abs, ""; err != nil; {
+		if filepath.Dir(dir) == dir {
+			return "", err
 		}
-		p = filepath.Join(dir, filepath.Base(abs))
+		dir, rest = filepath.Dir(dir), filepath.Join(filepath.Base(dir), rest)
+		var real string
+		if real, err = filepath.EvalSymlinks(dir); err == nil {
+			p = filepath.Join(real, rest)
+		}
 	}
 	root, err := filepath.EvalSymlinks(v.dir)
 	if err != nil {

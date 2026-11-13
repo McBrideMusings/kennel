@@ -172,8 +172,9 @@ in `settings.json` order. Codex skips a new or changed entry until it is trusted
 and keys trust by file, event, group index and handler index, so the first apply asks for
 trust once and an unchanged apply rewrites nothing.
 
-`kennel hook` sets `CLAUDE_PROJECT_DIR` to the payload's `cwd` and `CLAUDE_HOME` to the Claude
-home kennel routes that directory to. Under Codex it turns an `ask`, which Codex treats as a
+`kennel hook` sets `CLAUDE_PROJECT_DIR` to the payload's `cwd`, `CLAUDE_HOME` to the Claude
+home kennel routes that directory to, `KENNEL_HARNESS` to `codex` or `pi` and `KENNEL_BIN` to
+kennel's own path. Under Codex it turns an `ask`, which Codex treats as a
 failed hook that lets the call run, into a `deny` with the same reason, and a rewrite
 (`updatedInput`), which Codex honours only beside `allow`, into a `deny` naming the
 rewritten command. Under pi, `ask` opens a confirm dialog, `deny` blocks the call and a
@@ -198,6 +199,7 @@ the folder holds no `.git`. The repository has no remote.
 | `kennel vault log <item>` | the item's commits: short sha, time, message |
 | `kennel vault show <item>[@<rev>]` | the item at a commit: a file's text, or each file of a skill under a `==> path <==` header |
 | `kennel vault commit --session <id> --harness <h> <file>` | commits one file an agent edited, naming the harness and session |
+| `kennel vault hook` | the edit hook: reads a PostToolUse payload on stdin and runs `vault commit` on its `tool_input.file_path` when that resolves inside the vault, naming the payload's `session_id` and the harness; any other file returns at once, and no vault is created |
 
 An item is a path inside the vault (`skills/recomp`, `skills/recomp/SKILL.md`) or a bare
 name (`recomp`). Every vault command first commits any change made outside kennel as one
@@ -208,6 +210,18 @@ harness's skills folders in the base and profile homes, and every link `add` and
 made, recorded in `~/.local/state/kennel/vault-links`. A copy is plain files a project
 commits; `update` replaces them only when they match the recorded commit, so it never
 loses an edit.
+
+`hooks/kennel-vault-commit.sh` in this repo is the edit hook as a Claude hook script, tagged
+`# kennel-hook: adapter`. Put it in `<claude base>/hooks/` and wire it in `settings.json`:
+
+```json
+"PostToolUse": [{"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": "~/.claude/hooks/kennel-vault-commit.sh", "timeout": 10}]}]
+```
+
+`kennel hooks apply` then carries it to Codex (matching `apply_patch` too, one call per
+file) and pi. `kennel hook` sets `KENNEL_HARNESS` to `codex` or `pi`, which the commit
+message names; under Claude it is `claude`. pi's payload carries no session id, so its
+commits say `session unknown`.
 
 ## Reading what a harness gets
 

@@ -42,6 +42,7 @@ const usage = `kennel — route directories to coding-agent profiles
   kennel vault show <item>[@<rev>]         a vault item's files at a commit
   kennel vault commit --session <id> --harness <h> <file>
                                            commit one vault file an agent edited
+  kennel vault hook                        the edit hook: commit the vault file a PostToolUse payload names
   kennel harness show <skills|guidance|permissions|hooks|mcp> [--scope global|<dir>] [--harness claude|codex|pi] [--json]
                                            what one harness gets globally or in a project
   kennel harness recent [--json]           the directories Claude sessions ran in, newest first
