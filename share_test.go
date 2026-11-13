@@ -34,7 +34,7 @@ func TestShareApplyAndUndo(t *testing.T) {
 	os.MkdirAll(filepath.Join(h, "b"), 0o755)
 	os.WriteFile(filepath.Join(h, "b", "AGENTS.md"), []byte("mine"), 0o644)
 
-	if got := cmdShare(cfg, "apply"); got != 1 {
+	if got := cmdShare(cfg, "apply", nil); got != 1 {
 		t.Fatalf("apply with a blocked link exited %d, want 1", got)
 	}
 	if b, _ := os.ReadFile(filepath.Join(h, "b", "AGENTS.md")); string(b) != "mine" {
@@ -43,7 +43,7 @@ func TestShareApplyAndUndo(t *testing.T) {
 	if got, _ := os.Readlink(filepath.Join(h, "a", "AGENTS.md")); got != filepath.Join(h, "src", "AGENTS.md") {
 		t.Fatalf("link a points at %q", got)
 	}
-	cmdShare(cfg, "undo")
+	cmdShare(cfg, "undo", nil)
 	if _, err := os.Lstat(filepath.Join(h, "a", "AGENTS.md")); !os.IsNotExist(err) {
 		t.Fatal("undo left the link it made")
 	}
@@ -59,7 +59,7 @@ func TestShareUndoLeavesForeignSymlink(t *testing.T) {
 	}
 	os.MkdirAll(filepath.Join(h, "a"), 0o755)
 	os.Symlink("/elsewhere", filepath.Join(h, "a", "AGENTS.md"))
-	cmdShare(cfg, "undo")
+	cmdShare(cfg, "undo", nil)
 	if got, _ := os.Readlink(filepath.Join(h, "a", "AGENTS.md")); got != "/elsewhere" {
 		t.Fatalf("undo changed a foreign link to %q", got)
 	}
@@ -94,7 +94,7 @@ func orphanSandbox(t *testing.T) (string, *Config) {
 // cannot see it, nothing ever removes it.
 func TestOrphanReportedByPlanAndDoctor(t *testing.T) {
 	_, cfg := orphanSandbox(t)
-	out, _ := quiet(t, func() int { return cmdShare(cfg, "plan") })
+	out, _ := quiet(t, func() int { return cmdShare(cfg, "plan", nil) })
 	for _, name := range []string{"dst/gone", "dst/rel"} {
 		if !strings.Contains(out, "orphan    ~/"+name) {
 			t.Errorf("plan does not show %s as orphan:\n%s", name, out)
@@ -114,7 +114,7 @@ func TestOrphanReportedByPlanAndDoctor(t *testing.T) {
 func TestPruneRemovesOnlyOrphans(t *testing.T) {
 	h, cfg := orphanSandbox(t)
 	dst := filepath.Join(h, "dst")
-	out, code := quiet(t, func() int { return cmdShare(cfg, "prune") })
+	out, code := quiet(t, func() int { return cmdShare(cfg, "prune", nil) })
 	if code != 0 {
 		t.Fatalf("prune exited %d:\n%s", code, out)
 	}
@@ -141,7 +141,7 @@ func TestPruneRemovesOnlyOrphans(t *testing.T) {
 	if !strings.Contains(string(log), "share: pruned "+filepath.Join(dst, "gone")+" -> "+filepath.Join(h, "src", "skills", "gone")) {
 		t.Errorf("log lacks the prune line:\n%s", log)
 	}
-	out, code = quiet(t, func() int { return cmdShare(cfg, "prune") })
+	out, code = quiet(t, func() int { return cmdShare(cfg, "prune", nil) })
 	if code != 0 || !strings.Contains(out, "no orphaned links") {
 		t.Fatalf("second prune exit %d, output %q", code, out)
 	}
@@ -150,7 +150,7 @@ func TestPruneRemovesOnlyOrphans(t *testing.T) {
 func TestUndoRemovesOrphansToo(t *testing.T) {
 	h, cfg := orphanSandbox(t)
 	dst := filepath.Join(h, "dst")
-	quiet(t, func() int { return cmdShare(cfg, "undo") })
+	quiet(t, func() int { return cmdShare(cfg, "undo", nil) })
 	for _, name := range []string{"keep", "gone", "rel"} {
 		if _, err := os.Lstat(filepath.Join(dst, name)); !os.IsNotExist(err) {
 			t.Errorf("undo left %s", name)
@@ -189,5 +189,119 @@ func TestOrphanMissingIntoIsNone(t *testing.T) {
 	}
 	if got := orphanChecks(cfg); len(got) != 0 {
 		t.Fatalf("orphans with no into folder = %+v", got)
+	}
+}
+
+const twoShares = fileShare + "[shares.s]\nsource = \"~/src/skills\"\ninto = \"~/dst\"\nitems = [\"one\", \"two\"]\n"
+
+// scopedSandbox applies both shares: i links ~/a and ~/b AGENTS.md, s links
+// ~/dst/one and ~/dst/two.
+func scopedSandbox(t *testing.T) (string, *Config) {
+	t.Helper()
+	h, cfg, err := shareSandbox(t, twoShares)
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(h, "src", "skills", "one"), 0o755)
+	os.MkdirAll(filepath.Join(h, "src", "skills", "two"), 0o755)
+	os.WriteFile(filepath.Join(h, "src", "AGENTS.md"), []byte("x"), 0o644)
+	return h, cfg
+}
+
+func exists(p string) bool { _, err := os.Lstat(p); return err == nil }
+
+// Undo of one share must leave every other share's links; otherwise the
+// command is still all-or-nothing.
+func TestShareUndoOneShare(t *testing.T) {
+	h, cfg := scopedSandbox(t)
+	quiet(t, func() int { return cmdShare(cfg, "apply", nil) })
+	if out, code := quiet(t, func() int { return cmdShare(cfg, "undo", []string{"s"}) }); code != 0 {
+		t.Fatalf("undo s exited %d:\n%s", code, out)
+	}
+	for _, n := range []string{"dst/one", "dst/two"} {
+		if exists(filepath.Join(h, n)) {
+			t.Errorf("undo s left %s", n)
+		}
+	}
+	for _, n := range []string{"a/AGENTS.md", "b/AGENTS.md"} {
+		if !exists(filepath.Join(h, n)) {
+			t.Errorf("undo s removed share i's %s", n)
+		}
+	}
+}
+
+func TestShareUndoOneItem(t *testing.T) {
+	h, cfg := scopedSandbox(t)
+	quiet(t, func() int { return cmdShare(cfg, "apply", nil) })
+	quiet(t, func() int { return cmdShare(cfg, "undo", []string{"s", "one"}) })
+	quiet(t, func() int { return cmdShare(cfg, "undo", []string{"i", filepath.Join(h, "a", "AGENTS.md")}) })
+	for n, want := range map[string]bool{"dst/one": false, "dst/two": true, "a/AGENTS.md": false, "b/AGENTS.md": true} {
+		if exists(filepath.Join(h, n)) != want {
+			t.Errorf("%s exists = %v, want %v", n, !want, want)
+		}
+	}
+}
+
+func TestSharePlanAndApplyOneShare(t *testing.T) {
+	h, cfg := scopedSandbox(t)
+	out, _ := quiet(t, func() int { return cmdShare(cfg, "plan", []string{"s"}) })
+	if !strings.Contains(out, "~/dst/one") || strings.Contains(out, "AGENTS.md") {
+		t.Fatalf("plan s shows the wrong rows:\n%s", out)
+	}
+	quiet(t, func() int { return cmdShare(cfg, "apply", []string{"s"}) })
+	if !exists(filepath.Join(h, "dst", "one")) || exists(filepath.Join(h, "a", "AGENTS.md")) {
+		t.Fatal("apply s did not create only share s's links")
+	}
+}
+
+// A typo must change nothing: if apply fell back to every share, a mistyped
+// name would link everything.
+func TestShareUnknownScopeChangesNothing(t *testing.T) {
+	h, cfg := scopedSandbox(t)
+	for _, args := range [][]string{{"nope"}, {"s", "nope"}, {"i", filepath.Join(h, "c", "AGENTS.md")}} {
+		if _, code := quiet(t, func() int { return cmdShare(cfg, "apply", args) }); code != 1 {
+			t.Errorf("apply %v exited %d, want 1", args, code)
+		}
+	}
+	if exists(filepath.Join(h, "dst")) || exists(filepath.Join(h, "a")) {
+		t.Fatal("an unknown scope created links")
+	}
+}
+
+// An orphan's name counts as an item of its folder share, so one stale link
+// can be undone by name; orphans of the share stay in scope of the share.
+func TestShareScopeReachesOrphans(t *testing.T) {
+	h, cfg := orphanSandbox(t)
+	dst := filepath.Join(h, "dst")
+	if _, code := quiet(t, func() int { return cmdShare(cfg, "undo", []string{"s", "gone"}) }); code != 0 {
+		t.Fatal("undo of an orphan by name failed")
+	}
+	if exists(filepath.Join(dst, "gone")) || !exists(filepath.Join(dst, "rel")) || !exists(filepath.Join(dst, "keep")) {
+		t.Fatal("undo s gone removed the wrong links")
+	}
+	quiet(t, func() int { return cmdShare(cfg, "prune", []string{"s"}) })
+	if exists(filepath.Join(dst, "rel")) || !exists(filepath.Join(dst, "keep")) {
+		t.Fatal("prune s did not remove only the orphan")
+	}
+}
+
+// Two shares into one folder: scoping to one must not prune or undo the
+// other's orphan, which points into the other share's source.
+func TestShareScopeLeavesOtherSharesOrphan(t *testing.T) {
+	h, cfg, err := shareSandbox(t, folderShare+"[shares.t]\nsource = \"~/src/other\"\ninto = \"~/dst\"\nitems = [\"x\"]\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(h, "src", "other", "old"), 0o755)
+	os.MkdirAll(filepath.Join(h, "dst"), 0o755)
+	os.Symlink(filepath.Join(h, "src", "other", "old"), filepath.Join(h, "dst", "old"))
+	quiet(t, func() int { return cmdShare(cfg, "prune", []string{"s"}) })
+	quiet(t, func() int { return cmdShare(cfg, "undo", []string{"s"}) })
+	if !exists(filepath.Join(h, "dst", "old")) {
+		t.Fatal("scoping to share s removed share t's orphan")
+	}
+	quiet(t, func() int { return cmdShare(cfg, "prune", []string{"t"}) })
+	if exists(filepath.Join(h, "dst", "old")) {
+		t.Fatal("prune t left its own orphan")
 	}
 }

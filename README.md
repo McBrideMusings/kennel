@@ -77,6 +77,13 @@ name with no `/`.
 | `kennel share undo` | removes only symlinks that point at a configured share's source, orphans included |
 | `kennel share prune` | removes orphans only |
 
+Each command takes an optional share name, and after it an item, to act on less than every
+share: `kennel share undo skills` removes only the `skills` share's links, and
+`kennel share undo skills grill-me` only that one link. The item is a folder share's item
+name, an orphan's name in its `into`, or a file share's link path (a relative path is read
+from the current directory). An unknown share or item
+exits 1 and changes nothing.
+
 An orphan is a symlink in a folder share's `into` that points inside its `source` under a
 name no share lists, as when an item is dropped from `items` after `apply`. `plan` and
 `doctor` report each one, `doctor` as a FAIL.

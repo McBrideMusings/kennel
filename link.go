@@ -19,7 +19,7 @@ const (
 	linkOrphan              // a symlink into a folder share's source whose name is not in its items
 )
 
-const shareUsage = "usage: kennel share plan|apply|undo|prune"
+const shareUsage = "usage: kennel share plan|apply|undo|prune [share [item]]"
 
 // pair is one symlink that should exist: path links to target. label names
 // whose link it is, for output.
@@ -247,19 +247,65 @@ func cmdLink(cfg *Config, only string) int {
 	return 0
 }
 
+// shareScope is the part of [shares] one share command acts on: every share
+// (name empty), one share, or one link path of one share (path set).
+type shareScope struct{ name, path string }
+
+func (sc shareScope) filter(checks []linkCheck) []linkCheck {
+	var out []linkCheck
+	for _, c := range checks {
+		if sc.name == "" || c.label == "share "+sc.name && (sc.path == "" || c.path == sc.path) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// scopeShares resolves the optional [share [item]] arguments against every
+// check and orphan. The item is a folder share's item name (an orphan's name
+// included) or a file share's link path.
+func scopeShares(cfg *Config, args []string, all []linkCheck) (shareScope, error) {
+	if len(args) == 0 {
+		return shareScope{}, nil
+	}
+	s, ok := cfg.Shares[args[0]]
+	if !ok {
+		return shareScope{}, fmt.Errorf("no [shares.%s] in %s", args[0], cfg.Path)
+	}
+	if len(args) == 1 {
+		return shareScope{name: s.Name}, nil
+	}
+	sc := shareScope{name: s.Name}
+	if s.Into != "" {
+		sc.path = filepath.Join(s.Into, args[1])
+	} else if abs, err := filepath.Abs(expand(args[1])); err == nil {
+		sc.path = abs
+	}
+	if len(sc.filter(all)) == 0 {
+		return shareScope{}, fmt.Errorf("[shares.%s] has no item or link %s", s.Name, args[1])
+	}
+	return sc, nil
+}
+
 // cmdShare plans, applies, undoes or prunes the cross-tool links in
-// [shares]. Like link, it never moves or deletes a real file. undo removes
-// every link the shares list plus every orphan; prune removes orphans only.
-func cmdShare(cfg *Config, action string) int {
-	if action != "plan" && action != "apply" && action != "undo" && action != "prune" {
+// [shares], or only those of one share or one item when args names it. Like
+// link, it never moves or deletes a real file. undo removes every link in
+// scope plus every orphan in scope; prune removes orphans only.
+func cmdShare(cfg *Config, action string, args []string) int {
+	if action != "plan" && action != "apply" && action != "undo" && action != "prune" || len(args) > 2 {
 		return failf(shareUsage)
 	}
-	if len(cfg.Shares) == 0 {
+	if len(cfg.Shares) == 0 && len(args) == 0 {
 		fmt.Println("nothing to do: no [shares] in the config")
 		return 0
 	}
 	checks := checkPairs(sharePairs(cfg))
 	orphans := orphanChecks(cfg)
+	scope, err := scopeShares(cfg, args, append(checks, orphans...))
+	if err != nil {
+		return failf("%v", err)
+	}
+	checks, orphans = scope.filter(checks), scope.filter(orphans)
 	switch action {
 	case "plan":
 		for _, c := range append(checks, orphans...) {

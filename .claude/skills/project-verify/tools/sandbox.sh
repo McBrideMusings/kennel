@@ -81,6 +81,11 @@ check "doctor fails on an orphan" bash -c "cd '$S' && '$BIN' doctor | grep -q '^
 check "share prune removes the orphan" bash -c "'$BIN' share prune | grep -q '^pruned    ~/.agents/skills/dropped' && ! test -L '$S/.agents/skills/dropped'"
 check "prune left the listed link, foreign link and real file" bash -c "test -L '$S/.agents/skills/diagnose' && test \"\$(readlink '$S/.agents/skills/foreign')\" = /elsewhere && test \"\$(cat '$S/.agents/skills/realfile')\" = mine"
 check "prune logged" grep -q 'share: pruned .*/.agents/skills/dropped' "$S/.local/state/kennel/kennel.log"
+check "share plan <share> shows only that share" bash -c "'$BIN' share plan skills | grep -q diagnose && ! '$BIN' share plan skills | grep -q AGENTS.md"
+check "share undo <share> <item> removes only that link" bash -c "'$BIN' share undo skills diagnose && ! test -e '$S/.agents/skills/diagnose' && test -L '$S/.pi/agent/AGENTS.md'"
+check "share apply <share> relinks only that share" bash -c "'$BIN' share undo instructions && '$BIN' share apply skills && test -L '$S/.agents/skills/diagnose' && ! test -e '$S/.pi/agent/AGENTS.md'"
+check "share undo <unknown> exits 1 naming it" bash -c "'$BIN' share undo nope 2>&1 | grep -q 'shares.nope' && ! '$BIN' share undo nope 2>/dev/null"
+check "share undo <share> <unknown item> changes nothing" bash -c "! '$BIN' share undo skills nope 2>/dev/null && test -L '$S/.agents/skills/diagnose'"
 check "log written" test -s "$S/.local/state/kennel/kennel.log"
 
 [ "$fails" -eq 0 ]
