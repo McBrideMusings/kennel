@@ -141,6 +141,27 @@ check "vault commit names the harness and session" bash -c "'$BIN' vault commit 
 check "vault add refuses a link" bash -c "! '$BIN' vault add '$S/.claude/skills/recomp' 2>/dev/null"
 check "vault add logged" grep -q 'vault add: linked .*/.claude/skills/recomp -> ' "$S/.local/state/kennel/kennel.log"
 
+mcp() { # mcp <last id> <request JSON>...: one stdio session into $S/mcp.out, initialize first;
+  # replies come in any order, so stdin stays open until ids 1 to <last> are all in the file, up to 30 seconds
+  local last=$1; shift
+  : > "$S/mcp.out"
+  { printf '%s\n' '{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"verify","version":"0"}}}' '{"jsonrpc":"2.0","method":"notifications/initialized"}' "$@"
+    for _ in $(seq 300); do [ "$(grep -cE "\"id\":([1-9][0-9]*)," "$S/mcp.out")" -ge "$last" ] && break; sleep 0.1; done; } | "$BIN" mcp >> "$S/mcp.out"
+}
+mcp 5 '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' \
+  '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"harness","arguments":{}}}' \
+  '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"harness","arguments":{"directory":"'"$S/Work/repo"'"}}}' \
+  '{"jsonrpc":"2.0","id":4,"method":"resources/read","params":{"uri":"ui://kennel/harness"}}' \
+  '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"kennel","arguments":{"args":["route","rm","~/Work"]}}}'
+check "mcp harness tool names its app" grep -q '"ui":{"resourceUri":"ui://kennel/harness"}' "$S/mcp.out"
+check "mcp harness with no arguments is Global and Claude" bash -c "grep '\"id\":2,' '$S/mcp.out' | grep -q 'Opened kennel harness: global claude'"
+check "mcp harness with a routed folder is that project and profile" bash -c "grep '\"id\":3,' '$S/mcp.out' | grep -q 'Opened kennel harness: [^,]*/Work/repo, claude, profile work'"
+check "mcp app page is an MCP App with marked inlined" bash -c "grep '\"id\":4,' '$S/mcp.out' | grep 'text/html;profile=mcp-app' | grep -q 'marked v'"
+check "mcp kennel tool refuses a command that writes" bash -c "grep '\"id\":5,' '$S/mcp.out' | grep -q 'not a command the app runs' && grep -q '^~/Work work' '$KENNEL_CONFIG_DIR/routes'"
+mkdir -p "$S/.claude/projects/-x" "$S/tmp"
+printf '{"cwd":"%s"}\n' "$S/Work/repo" > "$S/.claude/projects/-x/s.jsonl"
+check "harness recent lists a session's folder" bash -c "TMPDIR='$S/tmp' '$BIN' harness recent | grep -qx '~/Work/repo'"
+
 cp "$KENNEL_CONFIG_DIR/config.toml" "$S/config.profiles"
 printf '[profiles.solo]\nclaude = { home = "~/.claude-solo", shared = ["skills"] }\n' >> "$KENNEL_CONFIG_DIR/config.toml"
 check "a profile's own shared list links only its items" bash -c "'$BIN' link && test -L '$S/.claude-solo/skills' && ! test -e '$S/.claude-solo/CLAUDE.md' && test -L '$S/.claude-work/CLAUDE.md'"

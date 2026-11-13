@@ -209,6 +209,32 @@ refuses a link, a name the vault already holds and a folder that is its own git 
 `--scope global` reads each harness's base home with no profile. Codex hooks that run one of
 Claude's hook scripts are marked as generated from Claude's hooks.
 
+| Command | Does |
+| --- | --- |
+| `kennel harness recent [--json]` | the folders Claude sessions ran in, newest first, from every profile's Claude `projects` folder; worktrees, temp folders and `~/Library` are left out |
+| `kennel mcp` | the harness app as a stdio MCP server |
+
+### The harness app
+
+`kennel mcp` serves one MCP App, `ui://kennel/harness`, and a `harness` tool that opens it.
+The tool takes an optional `directory` (left out: the Global scope) and `harness` (`claude`,
+`codex` or `pi`; left out: Claude). The app shows one scope and one harness at a time: a
+file tree, the selected file's text and its commits. It reads everything by running kennel
+commands through the server's app-only `kennel` tool, which runs only `harness show`,
+`harness recent`, `file log` and `file show`, and reads with `file log` and `file show` only
+files a `harness show` it ran has listed.
+
+To add it to Claude Desktop, put this in
+`~/Library/Application Support/Claude/claude_desktop_config.json` and restart Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "kennel": { "command": "/Users/you/go/bin/kennel", "args": ["mcp"] }
+  }
+}
+```
+
 ## Routes
 
 `~/.config/kennel/routes`, one `<path> <profile> [YYYY-MM-DD]` per line:

@@ -37,6 +37,8 @@ const usage = `kennel — route directories to coding-agent profiles
                                            commit one vault file an agent edited
   kennel harness show <skills|guidance|permissions|hooks|mcp> [--scope global|<dir>] [--harness claude|codex|pi] [--json]
                                            what one harness gets globally or in a project
+  kennel harness recent [--json]           the directories Claude sessions ran in, newest first
+  kennel mcp                               the harness app as a stdio MCP server
   kennel file log <path> [--json]          the commits that touched a file
   kennel file show <path>[@<rev>]          a file's text now or at a commit
   kennel env [fish]                        shell commands that set the variables for $PWD
@@ -105,6 +107,8 @@ func run(args []string) int {
 		return cmdVault(args[1:])
 	case "file":
 		return cmdFile(args[1:])
+	case "mcp":
+		return cmdMCP(args[1:])
 	case "init":
 		if len(args) != 2 || (args[1] != "zsh" && args[1] != "bash" && args[1] != "fish") {
 			return failf("usage: kennel init zsh|bash|fish")

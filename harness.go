@@ -20,7 +20,9 @@ import (
 // shows its own settings in a Project block and its profile's home in a
 // Global block. Each section reads the files that harness itself reads.
 
-const harnessUsage = `usage: kennel harness show <skills|guidance|permissions|hooks|mcp> [--scope global|<dir>] [--harness claude|codex|pi] [--json]`
+const harnessUsage = `usage:
+  kennel harness show <skills|guidance|permissions|hooks|mcp> [--scope global|<dir>] [--harness claude|codex|pi] [--json]
+  kennel harness recent [--json]`
 
 var harnessSections = []string{"skills", "guidance", "permissions", "hooks", "mcp"}
 var harnessNames = []string{"claude", "codex", "pi"}
@@ -105,6 +107,9 @@ type mcpEntry struct {
 }
 
 func cmdHarness(cfg *Config, args []string) int {
+	if len(args) > 0 && args[0] == "recent" {
+		return cmdHarnessRecent(cfg, args[1:])
+	}
 	if len(args) < 2 || args[0] != "show" || !slices.Contains(harnessSections, args[1]) {
 		return failf(harnessUsage)
 	}
