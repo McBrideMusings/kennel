@@ -1,13 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -89,25 +87,12 @@ func openVault() (*vault, error) {
 // variables a calling hook may have set, so only the vault's own state
 // decides what happens.
 func (v *vault) git(args ...string) (string, error) {
-	full := append([]string{
+	return runGit(v.dir, []string{
 		"--git-dir=" + v.gitDir, "--work-tree=" + v.dir,
 		"-c", "user.name=kennel", "-c", "user.email=kennel@localhost",
 		"-c", "core.hooksPath=/dev/null", "-c", "core.excludesFile=/dev/null",
-		"-c", "commit.gpgsign=false", "-c", "core.quotepath=false",
+		"-c", "commit.gpgsign=false",
 	}, args...)
-	c := exec.Command("git", full...)
-	c.Dir = v.dir
-	for _, e := range os.Environ() {
-		if !strings.HasPrefix(e, "GIT_") {
-			c.Env = append(c.Env, e)
-		}
-	}
-	var out, errb bytes.Buffer
-	c.Stdout, c.Stderr = &out, &errb
-	if err := c.Run(); err != nil {
-		return "", fmt.Errorf("git %s: %v: %s", args[0], err, strings.TrimSpace(errb.String()))
-	}
-	return out.String(), nil
 }
 
 // commitPaths stages every change under paths and commits it with msg. It

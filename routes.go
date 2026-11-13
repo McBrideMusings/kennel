@@ -146,7 +146,12 @@ func matchDir(dir string) string {
 	if err != nil {
 		return dir
 	}
-	common := strings.TrimSpace(string(out))
+	return matchFromCommon(strings.TrimSpace(string(out)), dir)
+}
+
+// matchFromCommon turns git's absolute common dir for dir into matchDir's
+// answer.
+func matchFromCommon(common, dir string) string {
 	// A submodule's common dir is <super>/.git/modules/<name>; cutting at the
 	// first /.git routes it with its superproject.
 	if i := strings.Index(common+"/", "/.git/"); i > 0 {
@@ -158,9 +163,15 @@ func matchDir(dir string) string {
 // resolve returns the profile the longest live route gives dir, or "" when no
 // route matches.
 func resolve(cfg *Config, lines []routeLine, dir string) string {
+	return resolveMatch(cfg, lines, matchDir(dir))
+}
+
+// resolveMatch is resolve for a directory already turned into matchDir's
+// answer.
+func resolveMatch(cfg *Config, lines []routeLine, md string) string {
 	// Git reports repo paths with symlinks resolved, so both sides of the
 	// comparison are resolved too.
-	md := canonical(matchDir(dir))
+	md = canonical(md)
 	day := today()
 	best, bestLen := "", -1
 	for _, l := range lines {

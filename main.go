@@ -35,6 +35,10 @@ const usage = `kennel — route directories to coding-agent profiles
   kennel vault show <item>[@<rev>]         a vault item's files at a commit
   kennel vault commit --session <id> --harness <h> <file>
                                            commit one vault file an agent edited
+  kennel harness show <skills|guidance|permissions|hooks|mcp> [--scope global|<dir>] [--harness claude|codex|pi] [--json]
+                                           what one harness gets globally or in a project
+  kennel file log <path> [--json]          the commits that touched a file
+  kennel file show <path>[@<rev>]          a file's text now or at a commit
   kennel env [fish]                        shell commands that set the variables for $PWD
   kennel init zsh|bash|fish                the hook ~/.zshrc, ~/.bashrc or config.fish evaluates
   kennel help config                       the config file format
@@ -99,6 +103,8 @@ func run(args []string) int {
 		return cmdHook(args[1:])
 	case "vault":
 		return cmdVault(args[1:])
+	case "file":
+		return cmdFile(args[1:])
 	case "init":
 		if len(args) != 2 || (args[1] != "zsh" && args[1] != "bash" && args[1] != "fish") {
 			return failf("usage: kennel init zsh|bash|fish")
@@ -145,6 +151,8 @@ func run(args []string) int {
 		return cmdShare(cfg, args[1], args[2:])
 	case "hooks":
 		return cmdHooks(cfg, args[1:])
+	case "harness":
+		return cmdHarness(cfg, args[1:])
 	case "doctor":
 		return cmdDoctor(cfg)
 	}

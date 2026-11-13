@@ -191,6 +191,17 @@ name (`recomp`). Every vault command first commits any change made outside kenne
 `sweep` commit. `vault add` is the one kennel command that moves a file of yours; it
 refuses a link, a name the vault already holds and a folder that is its own git repository.
 
+## Reading what a harness gets
+
+| Command | Does |
+| --- | --- |
+| `kennel harness show <skills\|guidance\|permissions\|hooks\|mcp> [--scope global\|<dir>] [--harness claude\|codex\|pi] [--json]` | lists one section for one harness: a Project block for the folder's git root, then a Global block from the home its route picks |
+| `kennel file log <path> [--json]` | the commits that touched the file, from the vault's history when the file is in the vault, else from its git repository; `[]` when no repository tracks it |
+| `kennel file show <path>[@<rev>]` | the file's text at a commit |
+
+`--scope global` reads each harness's base home with no profile. Codex hooks that run one of
+Claude's hook scripts are marked as generated from Claude's hooks.
+
 ## Routes
 
 `~/.config/kennel/routes`, one `<path> <profile> [YYYY-MM-DD]` per line:

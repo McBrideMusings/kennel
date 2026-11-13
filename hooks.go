@@ -68,7 +68,7 @@ type claudeSettings struct {
 }
 
 // hooksDir is where Claude's hook scripts live.
-func hooksDir(cfg *Config) string { return filepath.Join(cfg.Tools["claude"].Base, "hooks") }
+func hooksDir(cfg *Config) string { return filepath.Join(toolBase(cfg, "claude"), "hooks") }
 
 // hooksDirForms lists every spelling of the hooks directory a command can
 // carry: the absolute path, ~/…, $HOME/… and ${HOME}/….
@@ -135,7 +135,7 @@ func readTag(path string) (string, error) {
 // readClaudeHooks lists every handler in Claude's settings.json, in file
 // order within each event, with its script's tag.
 func readClaudeHooks(cfg *Config) ([]hookHandler, error) {
-	path := filepath.Join(cfg.Tools["claude"].Base, "settings.json")
+	path := filepath.Join(toolBase(cfg, "claude"), "settings.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

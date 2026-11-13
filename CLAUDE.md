@@ -8,6 +8,8 @@ Go CLI that routes directories to coding-agent profiles; see README.md for the m
   made, `shareedit.go` holds `share add` and `share rm`, which
   rewrite config.toml through `tomledit.go`'s editor of one share array, `hooks.go` generates Codex and pi hook files from Claude's hook list,
   `hookrun.go` is the `kennel hook` wrapper, `vault.go` holds the vault store and `kennel vault`,
+  `harness.go` is `kennel harness show`, which reads what Claude, Codex or pi gets in one scope,
+  `file.go` is `kennel file log` and `file show` and the one git runner `runGit`,
   `main.go` holds the commands and the zsh hook.
 - `kennel env` runs on every `cd` in every shell. Keep it to one config read, one routes
   read and one `git rev-parse`.
