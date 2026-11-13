@@ -12,15 +12,19 @@ Each CLI reads its home from one environment variable, read once at startup:
 | Codex | `CODEX_HOME` | `~/.codex` |
 | Pi | `PI_CODING_AGENT_DIR` | `~/.pi/agent` |
 
-A zsh hook runs `kennel env` on every `cd` and exports or unsets those variables for the
-new directory, so a CLI started from that shell, or from anything it launches, gets the
-right home.
+A shell hook (zsh, bash or fish) runs `kennel env` on every `cd` and exports or unsets those
+variables for the new directory, so a CLI started from that shell, or from anything it
+launches, gets the right home. bash has no directory-change hook, so `kennel init bash` wraps
+`cd`, `pushd` and `popd` (leaving alone any you already define as functions) and checks
+`$PWD` from `PROMPT_COMMAND` for every other way of changing directory.
 
 ## Install
 
 ```sh
 go install github.com/McBrideMusings/kennel@latest   # or `go install .` in a checkout
 echo 'command -v kennel >/dev/null && eval "$(kennel init zsh)"' >> ~/.zshrc
+# bash: echo 'command -v kennel >/dev/null && eval "$(kennel init bash)"' >> ~/.bashrc
+# fish: echo 'command -q kennel; and kennel init fish | source' >> ~/.config/fish/config.fish
 ```
 
 ## Config

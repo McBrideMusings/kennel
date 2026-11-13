@@ -92,12 +92,45 @@ func TestEnvRoutesPiBuiltIn(t *testing.T) {
 	work := filepath.Join(h, "Work", "repo")
 	os.MkdirAll(work, 0o755)
 	t.Chdir(work)
-	out, _ := quiet(t, func() int { return cmdEnv(cfg) })
+	out, _ := quiet(t, func() int { return cmdEnv(cfg, false) })
 	if want := "export PI_CODING_AGENT_DIR=" + shellQuote(filepath.Join(h, ".pi-work")) + "\n"; !strings.Contains(out, want) {
 		t.Errorf("kennel env in ~/Work printed:\n%s\nwant a line %q", out, want)
 	}
 	t.Chdir(h)
-	if out, _ := quiet(t, func() int { return cmdEnv(cfg) }); !strings.Contains(out, "unset PI_CODING_AGENT_DIR\n") {
+	if out, _ := quiet(t, func() int { return cmdEnv(cfg, false) }); !strings.Contains(out, "unset PI_CODING_AGENT_DIR\n") {
 		t.Errorf("kennel env in ~ printed:\n%s\nwant unset PI_CODING_AGENT_DIR", out)
+	}
+	if out, _ := quiet(t, func() int { return cmdEnv(cfg, true) }); !strings.Contains(out, "set -e PI_CODING_AGENT_DIR\n") || strings.Contains(out, "unset") {
+		t.Errorf("kennel env fish in ~ printed:\n%s\nwant set -e PI_CODING_AGENT_DIR and no unset", out)
+	}
+	t.Chdir(work)
+	if out, _ := quiet(t, func() int { return cmdEnv(cfg, true) }); !strings.Contains(out, "set -gx PI_CODING_AGENT_DIR "+fishQuote(filepath.Join(h, ".pi-work"))+"\n") {
+		t.Errorf("kennel env fish in ~/Work printed:\n%s\nwant set -gx PI_CODING_AGENT_DIR", out)
+	}
+}
+
+func TestFishQuote(t *testing.T) {
+	for in, want := range map[string]string{
+		"/Users/a/.claude": `'/Users/a/.claude'`,
+		"it's":             `'it\'s'`,
+		`back\slash`:       `'back\\slash'`,
+		"$HOME (x)":        `'$HOME (x)'`,
+	} {
+		if got := fishQuote(in); got != want {
+			t.Errorf("fishQuote(%q) = %s, want %s", in, got, want)
+		}
+	}
+}
+
+func TestInitHintNamesLoginShell(t *testing.T) {
+	for shell, want := range map[string]string{
+		"/opt/homebrew/bin/bash": "~/.bashrc",
+		"/usr/local/bin/fish":    "kennel init fish | source",
+		"/bin/zsh":               "~/.zshrc",
+		"":                       "~/.zshrc",
+	} {
+		if got := initHint(shell); !strings.Contains(got, want) {
+			t.Errorf("initHint(%q) = %q, want it to name %q", shell, got, want)
+		}
 	}
 }

@@ -1,7 +1,7 @@
 // kennel routes directories to named profiles for coding-agent CLIs
 // (Claude Code, Codex, ...). A profile gives each tool its own home directory,
 // so a directory under ~/Work starts `claude` and `codex` logged into the work
-// accounts. A zsh hook exports each tool's home variable on every cd.
+// accounts. A zsh, bash or fish hook exports each tool's home variable on every cd.
 package main
 
 import (
@@ -30,8 +30,8 @@ const usage = `kennel — route directories to coding-agent profiles
   kennel hooks list codex|pi               the shared hooks as JSON, wrapped for that tool
   kennel hook codex|pi -- <command>        run one Claude hook on that tool's payload
   kennel doctor                            check config, symlinks and this shell's variables
-  kennel env                               shell commands that set the variables for $PWD
-  kennel init zsh                          the hook ~/.zshrc evaluates
+  kennel env [fish]                        shell commands that set the variables for $PWD
+  kennel init zsh|bash|fish                the hook ~/.zshrc, ~/.bashrc or config.fish evaluates
   kennel help config                       the config file format
 
   when: ` + whenHelp + `
@@ -93,10 +93,10 @@ func run(args []string) int {
 	case "hook":
 		return cmdHook(args[1:])
 	case "init":
-		if len(args) != 2 || args[1] != "zsh" {
-			return failf("usage: kennel init zsh")
+		if len(args) != 2 || (args[1] != "zsh" && args[1] != "bash" && args[1] != "fish") {
+			return failf("usage: kennel init zsh|bash|fish")
 		}
-		return cmdInit()
+		return cmdInit(args[1])
 	}
 
 	cfg, err := loadConfig()
@@ -105,7 +105,10 @@ func run(args []string) int {
 	}
 	switch args[0] {
 	case "env":
-		return cmdEnv(cfg)
+		if len(args) > 2 || (len(args) == 2 && args[1] != "fish") {
+			return failf("usage: kennel env [fish]")
+		}
+		return cmdEnv(cfg, len(args) == 2)
 	case "which":
 		dir := "."
 		if len(args) > 1 {
@@ -142,27 +145,71 @@ func run(args []string) int {
 	return 2
 }
 
-// cmdInit prints the zsh hook. It calls this binary by absolute path so the
-// hook works before PATH is set up and in shells that change PATH.
-func cmdInit() int {
+// cmdInit prints the hook for one shell. It calls this binary by absolute
+// path so the hook works before PATH is set up and in shells that change PATH.
+// Each hook also wraps kennel so a route change applies at once. The wrapper
+// repeats the env call rather than calling the hook function: the Claude Code
+// Bash tool's shell snapshot keeps kennel() but drops underscore-prefixed
+// functions.
+func cmdInit(shell string) int {
 	exe, err := selfPath()
 	if err != nil {
 		return failf("%v", err)
 	}
-	q := shellQuote(exe)
-	// The wrapper repeats the eval rather than calling _kennel_apply: the
-	// Claude Code Bash tool's shell snapshot keeps kennel() but drops
-	// underscore-prefixed functions.
-	fmt.Printf(`_kennel_apply() { eval "$(%[1]s env)" }
+	switch shell {
+	case "zsh":
+		fmt.Printf(`_kennel_apply() { eval "$(%[1]s env)" }
 kennel() { %[1]s "$@"; local rc=$?; eval "$(%[1]s env)"; return $rc }
 autoload -Uz add-zsh-hook
 add-zsh-hook chpwd _kennel_apply
 _kennel_apply
+`, shellQuote(exe))
+	case "bash":
+		// bash has no chpwd hook. Like mise, wrap cd, pushd and popd, so
+		// `cd dir && claude` and shells that never print a prompt get the
+		// route; an existing function of that name is left alone. Like direnv,
+		// also run from PROMPT_COMMAND (a string, or an array in bash 5.1+) to
+		// catch any other directory change. Both run kennel env only when $PWD
+		// changed. The wrappers inline the check, as kennel() does, because the
+		// Claude Code snapshot drops _kennel_hook.
+		q := shellQuote(exe)
+		apply := fmt.Sprintf(`if [[ "$PWD" != "${_KENNEL_PWD-}" ]]; then _KENNEL_PWD=$PWD; eval "$(%s env)"; fi`, q)
+		fmt.Printf("_kennel_hook() { local rc=$?; %s; return $rc; }\n", apply)
+		for _, c := range []string{"cd", "pushd", "popd"} {
+			fmt.Printf("declare -F %[1]s >/dev/null || %[1]s() { builtin %[1]s \"$@\" || return; %[2]s; }\n", c, apply)
+		}
+		fmt.Printf(`kennel() { %[1]s "$@"; local rc=$?; eval "$(%[1]s env)"; return $rc; }
+if [[ "$(declare -p PROMPT_COMMAND 2>/dev/null)" == "declare -a"* ]]; then
+  if [[ " ${PROMPT_COMMAND[*]} " != *" _kennel_hook "* ]]; then
+    PROMPT_COMMAND=(_kennel_hook "${PROMPT_COMMAND[@]}")
+  fi
+elif [[ ";${PROMPT_COMMAND-};" != *";_kennel_hook;"* ]]; then
+  PROMPT_COMMAND="_kennel_hook${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+fi
+_kennel_hook
 `, q)
+	case "fish":
+		// fish sets $PWD on every directory change, so --on-variable PWD is
+		// its chpwd. fish cannot read export/unset lines; kennel env fish
+		// prints set -gx and set -e.
+		fmt.Printf(`function __kennel_apply --on-variable PWD
+    %[1]s env fish | source
+end
+function kennel
+    %[1]s $argv
+    set -l rc $status
+    %[1]s env fish | source
+    return $rc
+end
+__kennel_apply
+`, fishQuote(exe))
+	}
 	return 0
 }
 
-func cmdEnv(cfg *Config) int {
+// cmdEnv prints the commands that set each tool's variable for $PWD: export
+// and unset lines for zsh and bash, set -gx and set -e lines for fish.
+func cmdEnv(cfg *Config, fish bool) int {
 	if _, err := dropExpired(); err != nil {
 		return failf("%v", err)
 	}
@@ -177,9 +224,15 @@ func cmdEnv(cfg *Config) int {
 	profile := resolve(cfg, lines, dir)
 	for _, name := range cfg.toolNames() {
 		env := cfg.Tools[name].Env
-		if h := cfg.Profiles[profile][name]; h != "" {
+		h := cfg.Profiles[profile][name]
+		switch {
+		case fish && h != "":
+			fmt.Printf("set -gx %s %s\n", env, fishQuote(h))
+		case fish:
+			fmt.Printf("set -e %s\n", env)
+		case h != "":
 			fmt.Printf("export %s=%s\n", env, shellQuote(h))
-		} else {
+		default:
 			fmt.Printf("unset %s\n", env)
 		}
 	}
@@ -500,7 +553,7 @@ func cmdDoctor(cfg *Config) int {
 		}
 	}
 	if problems > before {
-		fmt.Println("      (a wrong variable here usually means ~/.zshrc does not run `eval \"$(kennel init zsh)\"`)")
+		fmt.Printf("      (a wrong variable here usually means %s)\n", initHint(os.Getenv("SHELL")))
 	}
 
 	if problems > 0 {
@@ -510,7 +563,24 @@ func cmdDoctor(cfg *Config) int {
 	return 0
 }
 
+// initHint names the rc file and hook line for the login shell in $SHELL.
+func initHint(shell string) string {
+	switch filepath.Base(shell) {
+	case "bash":
+		return "~/.bashrc does not run `eval \"$(kennel init bash)\"`"
+	case "fish":
+		return "~/.config/fish/config.fish does not run `kennel init fish | source`"
+	}
+	return "~/.zshrc does not run `eval \"$(kennel init zsh)\"`"
+}
+
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// fishQuote single-quotes s for fish, where \ and ' are the only escapes
+// inside single quotes.
+func fishQuote(s string) string {
+	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(s) + "'"
+}
 
 func failf(format string, a ...any) int {
 	fmt.Fprintf(os.Stderr, "kennel: "+format+"\n", a...)
