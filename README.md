@@ -69,7 +69,15 @@ items  = ["diagnose", "research"]
 ```
 
 A share has `source` and either `links` or `into` and `items`, never both. Each item is one
-name with no `/`. One link path belongs to one share: `kennel` refuses a config where two
+name with no `/`.
+
+`items = "*"` links every entry in `source` but dotfiles, read each time a command runs, so
+a skill added to `source` is linked by the next `share apply` with no config edit.
+`exclude = ["grill-me"]` beside it leaves those entries out; `exclude` without `"*"` is an
+error. A `"*"` share claims every name in its `into`, so another share may link a name there
+only when the `"*"` share excludes it, and two `"*"` shares never share an `into`. When
+`source` is missing or not a folder, `plan` and `doctor` report it once and nothing in `into`
+counts as an orphan. One link path belongs to one share: `kennel` refuses a config where two
 shares link the same path, or one share lists a path twice.
 
 | Command | Does |
@@ -93,10 +101,13 @@ reported, left alone, and makes `rm` exit 1. A file share takes link paths after
 `kennel share add instructions --link ~/.gemini/AGENTS.md`. Both edit `config.toml` line by
 line, so every comment and key outside the edited array stays as written, and log each
 config edit and link to kennel's change log. `add` refuses an item missing from `source`;
-`rm` refuses to empty a share (run `share undo` and delete the table by hand).
+`rm` refuses to empty a share (run `share undo` and delete the table by hand). On a `"*"` share,
+`rm` adds the entry to `exclude` (writing an `exclude` line under `items` when there is none)
+and removes its link, and `add` takes it back out of `exclude` and links it.
 
 An orphan is a symlink in a folder share's `into` that points inside its `source` under a
-name no share lists, as when an item is dropped from `items` after `apply`. `plan` and
+name no share lists, as when an item is dropped from `items` after `apply`, or, with
+`items = "*"`, when an entry is excluded or deleted from `source`. `plan` and
 `doctor` report each one, `doctor` as a FAIL.
 
 Like `link`, `share apply` never moves or deletes a file: a real file or directory where a

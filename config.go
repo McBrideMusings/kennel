@@ -30,13 +30,48 @@ type Tool struct {
 }
 
 // Share links one tool's files into another tool's home. A file share has
-// Links; a folder share has Into and Items.
+// Links; a folder share has Into and either Items or All (items = "*"), which
+// links every entry of Source not named in Exclude.
 type Share struct {
-	Name   string
-	Source string
-	Links  []string
-	Into   string
-	Items  []string
+	Name    string
+	Source  string
+	Links   []string
+	Into    string
+	Items   []string
+	All     bool
+	Exclude []string
+}
+
+// itemsValue is a folder share's `items`: an array of names, or "*".
+type itemsValue struct {
+	all   bool
+	names []string
+}
+
+func (v *itemsValue) UnmarshalTOML(data any) error {
+	switch d := data.(type) {
+	case string:
+		if d != "*" {
+			return fmt.Errorf("items = %q: write \"*\" or an array of names", d)
+		}
+		v.all = true
+	case []any:
+		for _, e := range d {
+			name, ok := e.(string)
+			if !ok {
+				return fmt.Errorf("items holds %v, which is not a string", e)
+			}
+			v.names = append(v.names, name)
+		}
+	default:
+		return fmt.Errorf("items must be \"*\" or an array of names")
+	}
+	return nil
+}
+
+// validName reports whether item is one name inside a folder.
+func validName(item string) bool {
+	return item != "" && !strings.Contains(item, "/") && item != "." && item != ".."
 }
 
 // HooksOptIn says which tools get Claude's portable and adapter hooks.
@@ -61,10 +96,11 @@ type rawTool struct {
 }
 
 type rawShare struct {
-	Source string   `toml:"source"`
-	Links  []string `toml:"links"`
-	Into   string   `toml:"into"`
-	Items  []string `toml:"items"`
+	Source  string     `toml:"source"`
+	Links   []string   `toml:"links"`
+	Into    string     `toml:"into"`
+	Items   itemsValue `toml:"items"`
+	Exclude []string   `toml:"exclude"`
 }
 
 type rawConfig struct {
@@ -147,7 +183,7 @@ func loadConfig() (*Config, error) {
 		}
 		t.Base = expand(t.Base)
 		for _, item := range t.Shared {
-			if item == "" || strings.Contains(item, "/") || item == "." || item == ".." {
+			if !validName(item) {
 				problems = append(problems, fmt.Sprintf("[tools.%s] shared item %q must be one name inside the base home", name, item))
 			}
 		}
@@ -184,20 +220,23 @@ func loadConfig() (*Config, error) {
 			problems = append(problems, fmt.Sprintf("[shares.%s] has both `links` and `into`/`items`; use one kind of share", name))
 		case !isFile && !isFolder:
 			problems = append(problems, fmt.Sprintf("[shares.%s] needs `links` (one file) or `into` and `items` (folders)", name))
-		case isFolder && (rs.Into == "" || len(rs.Items) == 0):
+		case isFolder && (rs.Into == "" || !rs.Items.all && len(rs.Items.names) == 0):
 			problems = append(problems, fmt.Sprintf("[shares.%s] a folder share needs both `into` and `items`", name))
 		case isFile && len(rs.Links) == 0:
 			problems = append(problems, fmt.Sprintf("[shares.%s] `links` is empty", name))
 		}
-		s := &Share{Name: name, Source: expand(rs.Source), Into: rs.Into, Items: rs.Items}
+		if md.IsDefined("shares", name, "exclude") && !rs.Items.all {
+			problems = append(problems, fmt.Sprintf("[shares.%s] `exclude` needs `items = \"*\"`; with a list, leave the name out of `items`", name))
+		}
+		s := &Share{Name: name, Source: expand(rs.Source), Into: rs.Into, Items: rs.Items.names, All: rs.Items.all, Exclude: rs.Exclude}
 		if s.Into != "" {
 			s.Into = expand(s.Into)
 		}
 		for _, l := range rs.Links {
 			s.Links = append(s.Links, expand(l))
 		}
-		for _, item := range rs.Items {
-			if item == "" || strings.Contains(item, "/") || item == "." || item == ".." {
+		for _, item := range append(slices.Clone(rs.Items.names), rs.Exclude...) {
+			if !validName(item) {
 				problems = append(problems, fmt.Sprintf("[shares.%s] item %q must be one name with no /", name, item))
 			}
 		}
@@ -205,8 +244,19 @@ func loadConfig() (*Config, error) {
 		broken[name] = len(problems) > before
 	}
 	// Each link path belongs to one share, listed once: a second claim would
-	// leave apply, undo and doctor following whichever share sorted first.
-	claimed := map[string]string{}
+	// leave apply, undo and doctor following whichever share sorted first. A
+	// share with items = "*" claims every name in its into but its excludes
+	// and dotfiles, since what source holds changes after the config loads.
+	claimed, stars := map[string]string{}, map[string]string{}
+	for _, name := range cfg.shareNames() {
+		if s := cfg.Shares[name]; !broken[name] && s.All {
+			if owner, ok := stars[s.Into]; ok {
+				problems = append(problems, fmt.Sprintf("[shares.%s] and [shares.%s] both link every entry into %s; one folder takes one items = \"*\" share", owner, name, tilde(s.Into)))
+				continue
+			}
+			stars[s.Into] = name
+		}
+	}
 	for _, name := range cfg.shareNames() {
 		if broken[name] {
 			continue
@@ -217,6 +267,11 @@ func loadConfig() (*Config, error) {
 			paths = append(paths, filepath.Join(s.Into, item))
 		}
 		for _, p := range paths {
+			dir, base := filepath.Dir(p), filepath.Base(p)
+			if star, ok := stars[dir]; ok && !strings.HasPrefix(base, ".") && !slices.Contains(cfg.Shares[star].Exclude, base) {
+				problems = append(problems, fmt.Sprintf("[shares.%s] links every entry into %s, and [shares.%s] links %s; add %q to [shares.%s] exclude", star, tilde(dir), name, tilde(p), base, star))
+				continue
+			}
 			switch owner, ok := claimed[p]; {
 			case !ok:
 				claimed[p] = name
@@ -265,4 +320,25 @@ func (c *Config) shareNames() []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// entries lists the names a folder share links: Items, or for items = "*"
+// every entry of Source but dotfiles and Exclude, read now so an entry added
+// to source is linked on the next run. It errors when Source is no readable
+// folder.
+func (s *Share) entries() ([]string, error) {
+	if !s.All {
+		return s.Items, nil
+	}
+	des, err := os.ReadDir(s.Source)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range des {
+		if n := e.Name(); !strings.HasPrefix(n, ".") && !slices.Contains(s.Exclude, n) {
+			out = append(out, n)
+		}
+	}
+	return out, nil
 }

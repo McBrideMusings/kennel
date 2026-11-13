@@ -27,6 +27,23 @@ type tomlElem struct {
 // It reads only that layout; a share written as an inline table or with
 // dotted keys is an error that asks for a hand edit.
 func findShareArray(src []byte, name, key string) (*tomlArray, error) {
+	start, end, err := findShareLine(src, name, key)
+	if err != nil {
+		return nil, err
+	}
+	i := start + bytes.IndexByte(src[start:end], '=') + 1
+	for i < len(src) && (src[i] == ' ' || src[i] == '\t') {
+		i++
+	}
+	if i >= len(src) || src[i] != '[' {
+		return nil, fmt.Errorf("[shares.%s] %s is not an array of strings; edit it by hand", name, key)
+	}
+	return scanArray(src, i, name, key)
+}
+
+// findShareLine returns the offsets of the line holding `key = ` inside the
+// [shares.<name>] table, its newline included.
+func findShareLine(src []byte, name, key string) (start, end int, err error) {
 	lines := bytes.SplitAfter(src, []byte("\n"))
 	off, inTable := 0, false
 	for _, line := range lines {
@@ -45,19 +62,29 @@ func findShareArray(src []byte, name, key string) (*tomlArray, error) {
 			break
 		}
 		rest, ok := strings.CutPrefix(t, key)
-		if !ok || !strings.HasPrefix(strings.TrimLeft(rest, " \t"), "=") {
-			continue
+		if ok && strings.HasPrefix(strings.TrimLeft(rest, " \t"), "=") {
+			return start, off, nil
 		}
-		i := start + bytes.IndexByte(line, '=') + 1
-		for i < len(src) && (src[i] == ' ' || src[i] == '\t') {
-			i++
-		}
-		if i >= len(src) || src[i] != '[' {
-			return nil, fmt.Errorf("[shares.%s] %s is not an array of strings; edit it by hand", name, key)
-		}
-		return scanArray(src, i, name, key)
 	}
-	return nil, fmt.Errorf("no `%s = [...]` line in [shares.%s]; edit it by hand", key, name)
+	return 0, 0, fmt.Errorf("no `%s = [...]` line in [shares.%s]; edit it by hand", key, name)
+}
+
+// insertShareArray returns src with a new line `key = ["v"]` right after the
+// [shares.<name>] table's `after = ` line, indented like it.
+func insertShareArray(src []byte, name, after, key, v string) ([]byte, error) {
+	start, end, err := findShareLine(src, name, after)
+	if err != nil {
+		return nil, err
+	}
+	line := src[start:end]
+	indent := line[:len(line)-len(bytes.TrimLeft(line, " \t"))]
+	add := string(indent) + key + " = [" + strconv.Quote(v) + "]\n"
+	if !bytes.HasSuffix(line, []byte("\n")) {
+		add = "\n" + strings.TrimSuffix(add, "\n")
+	}
+	out := append([]byte{}, src[:end]...)
+	out = append(out, add...)
+	return append(out, src[end:]...), nil
 }
 
 // scanArray reads the strings, commas and comments of the array that opens

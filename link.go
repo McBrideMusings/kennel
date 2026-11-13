@@ -25,10 +25,12 @@ const shareUsage = `usage: kennel share plan|apply|undo|prune [share [item]]
        kennel share add|rm <share> --link <path>...`
 
 // pair is one symlink that should exist: path links to target. label names
-// whose link it is, for output.
+// whose link it is, for output. unreadable marks the stand-in pair of an
+// items = "*" share whose source cannot be listed: path is <into>/*.
 type pair struct {
 	label        string
 	path, target string
+	unreadable   bool
 }
 
 type linkCheck struct {
@@ -49,6 +51,11 @@ func (c linkCheck) describe() string {
 		return fmt.Sprintf("blocked   %s is a real file or directory, not a link to %s", tilde(c.path), tilde(c.target))
 	case linkOrphan:
 		return fmt.Sprintf("orphan    %s → %s (not in the share's items; `kennel share prune` removes it)", tilde(c.path), tilde(c.target))
+	case baseMissing:
+		if c.unreadable {
+			return fmt.Sprintf("no source %s is not a readable folder, so %s links nothing", tilde(c.target), tilde(c.path))
+		}
+		fallthrough
 	default:
 		return fmt.Sprintf("no source %s does not exist, so %s has nothing to link to", tilde(c.target), tilde(c.path))
 	}
@@ -86,7 +93,11 @@ func sharePairs(cfg *Config) []pair {
 		for _, l := range s.Links {
 			out = append(out, pair{label: label, path: l, target: s.Source})
 		}
-		for _, item := range s.Items {
+		items, err := s.entries()
+		if err != nil {
+			out = append(out, pair{label: label, path: filepath.Join(s.Into, "*"), target: s.Source, unreadable: true})
+		}
+		for _, item := range items {
 			out = append(out, pair{label: label, path: filepath.Join(s.Into, item), target: filepath.Join(s.Source, item)})
 		}
 	}
@@ -96,7 +107,10 @@ func sharePairs(cfg *Config) []pair {
 // orphanChecks finds the links sharePairs cannot see: a symlink inside a
 // folder share's into that points inside its source, under a name no share
 // lists. Each comes back as linkOrphan with target set to where it points.
-// Real files and links pointing anywhere else are not orphans.
+// Real files and links pointing anywhere else are not orphans. With
+// items = "*" an excluded entry's link, or one whose entry left source, is an
+// orphan; a "*" share whose source cannot be listed is skipped, so a source
+// that is briefly gone does not turn every link into one prune removes.
 func orphanChecks(cfg *Config) []linkCheck {
 	listed := map[string]bool{}
 	for _, p := range sharePairs(cfg) {
@@ -106,6 +120,9 @@ func orphanChecks(cfg *Config) []linkCheck {
 	for _, name := range cfg.shareNames() {
 		s := cfg.Shares[name]
 		if s.Into == "" {
+			continue
+		}
+		if _, err := s.entries(); err != nil {
 			continue
 		}
 		entries, err := os.ReadDir(s.Into)
@@ -154,6 +171,8 @@ func checkPairs(pairs []pair) []linkCheck {
 	for _, p := range pairs {
 		c := linkCheck{pair: p}
 		switch fi, err := os.Lstat(c.path); {
+		case p.unreadable:
+			c.state = baseMissing
 		case errors.Is(err, os.ErrNotExist):
 			c.state = linkMissing
 		case err != nil:
@@ -378,7 +397,7 @@ func cmdShareEdit(cfg *Config, action string, args []string) int {
 	for _, n := range names {
 		v := n
 		if key == "items" {
-			if n == "" || strings.Contains(n, "/") || n == "." || n == ".." {
+			if !validName(n) {
 				return failf("item %q must be one name with no /", n)
 			}
 		} else {
@@ -406,7 +425,19 @@ func cmdShareEdit(cfg *Config, action string, args []string) int {
 	}
 	edited, orig := src, cfg
 	var changes []string
-	if action == "add" {
+	if s.All {
+		// items = "*" links every entry: add and rm edit exclude instead.
+		var undo []string
+		if edited, changes, undo, err = editExclude(s, action, vals, src); err != nil {
+			return failf("%s: %v", cfg.Path, err)
+		}
+		key = "exclude"
+		for _, v := range undo {
+			if code := cmdShare(cfg, "undo", []string{s.Name, v}); code != 0 {
+				return code
+			}
+		}
+	} else if action == "add" {
 		for _, v := range vals {
 			if listed(v) {
 				fmt.Printf("listed    %s is already in [shares.%s] %s\n", v, s.Name, key)
@@ -473,6 +504,64 @@ func cmdShareEdit(cfg *Config, action string, args []string) int {
 		code |= cmdShare(cfg, "apply", []string{s.Name, v})
 	}
 	return code
+}
+
+// editExclude is share add and rm for an items = "*" share: rm adds each
+// entry of source to exclude, add takes it back out. It returns the edited
+// text, one change line per edit, and the entries rm newly excluded, whose
+// links go next. A share with no exclude line gets one after items.
+func editExclude(s *Share, action string, vals []string, src []byte) (edited []byte, changes, excluded []string, err error) {
+	edited = src
+	have := slices.Clone(s.Exclude)
+	for _, v := range vals {
+		if strings.HasPrefix(v, ".") {
+			return nil, nil, nil, fmt.Errorf("[shares.%s] items = \"*\" never links a dotfile such as %s", s.Name, v)
+		}
+		switch in := slices.Contains(have, v); {
+		case action == "add" && !in:
+			fmt.Printf("listed    %s is already linked by [shares.%s] items = \"*\"\n", v, s.Name)
+			continue
+		case action == "rm" && in:
+			fmt.Printf("listed    %s is already in [shares.%s] exclude\n", v, s.Name)
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(s.Source, v)); err != nil {
+			if action == "add" {
+				return nil, nil, nil, fmt.Errorf("%s does not exist, so %s has nothing to link to", tilde(filepath.Join(s.Source, v)), v)
+			}
+			return nil, nil, nil, fmt.Errorf("[shares.%s] links no %s: %s does not exist (`kennel share prune %s` removes a link left behind)", s.Name, v, tilde(filepath.Join(s.Source, v)), s.Name)
+		}
+		if action == "add" {
+			arr, err := findShareArray(edited, s.Name, "exclude")
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			i := slices.IndexFunc(arr.elems, func(e tomlElem) bool { return e.value == v })
+			if i < 0 {
+				return nil, nil, nil, fmt.Errorf("[shares.%s] exclude has no %s; edit it by hand", s.Name, v)
+			}
+			edited = arr.removed(i)
+			have = slices.DeleteFunc(have, func(e string) bool { return e == v })
+			changes = append(changes, "removed "+v+" from")
+			continue
+		}
+		if _, _, err := findShareLine(edited, s.Name, "exclude"); err != nil {
+			edited, err = insertShareArray(edited, s.Name, "items", "exclude", v)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+		} else {
+			arr, err := findShareArray(edited, s.Name, "exclude")
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			edited = arr.appended(v)
+		}
+		have = append(have, v)
+		excluded = append(excluded, v)
+		changes = append(changes, "added "+v+" to")
+	}
+	return edited, changes, excluded, nil
 }
 
 // leftBehind reports what share rm left at each removed entry's path: a real

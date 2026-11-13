@@ -100,6 +100,14 @@ check "share add --link links the new path" bash -c "'$BIN' share add instructio
 check "share rm --link removes it" bash -c "'$BIN' share rm instructions --link '$S/.codex/AGENTS.md' && ! test -e '$S/.codex/AGENTS.md' && cmp -s '$S/config.before' '$KENNEL_CONFIG_DIR/config.toml'"
 check "share rm refuses to empty a share" bash -c "! '$BIN' share rm skills diagnose 2>/dev/null && test -L '$S/.agents/skills/diagnose' && cmp -s '$S/config.before' '$KENNEL_CONFIG_DIR/config.toml'"
 check "share add and rm logged" bash -c "grep -q 'share: added dropped to \[shares.skills\] items' '$S/.local/state/kennel/kennel.log' && grep -q 'share: removed .*/.codex/AGENTS.md -> ' '$S/.local/state/kennel/kennel.log'"
+sed -i '' 's/^items  = \["diagnose"\]$/items  = "*"/' "$KENNEL_CONFIG_DIR/config.toml"
+check "items = \"*\" links every source entry" bash -c "'$BIN' share apply skills && test -L '$S/.agents/skills/other' && test -L '$S/.agents/skills/dropped'"
+mkdir -p "$S/.claude/skills/fresh"
+check "items = \"*\" links a new entry with no config edit" bash -c "'$BIN' share apply skills | grep -q '^linked    ~/.agents/skills/fresh '"
+check "share rm on a \"*\" share writes exclude and removes the link" bash -c "'$BIN' share rm skills other && grep -qx 'exclude = \[\"other\"\]' '$KENNEL_CONFIG_DIR/config.toml' && ! test -e '$S/.agents/skills/other'"
+rm -rf "$S/.claude/skills/fresh"
+check "doctor flags a link whose source entry is gone" bash -c "cd '$S' && '$BIN' doctor | grep -q '^FAIL  share skills orphan    ~/.agents/skills/fresh '"
+check "share prune removes it" bash -c "'$BIN' share prune skills && ! test -L '$S/.agents/skills/fresh' && test -L '$S/.agents/skills/diagnose'"
 check "log written" test -s "$S/.local/state/kennel/kennel.log"
 
 [ "$fails" -eq 0 ]

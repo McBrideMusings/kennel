@@ -61,7 +61,8 @@ const configHelp = `Config: ~/.config/kennel/config.toml (KENNEL_CONFIG_DIR move
   [shares.skills]               # optional: one folder link per named item
   source = "~/.claude/skills"
   into   = "~/.agents/skills"
-  items  = ["diagnose", "research"]
+  items  = ["diagnose", "research"]   # or "*": every entry in source
+  # exclude = ["grill-me"]      # with items = "*": entries not to link
 
   [hooks]                       # optional: run Claude's tagged hooks elsewhere
   codex = true                  # rewrite ~/.codex/hooks.json entries into ~/.claude/hooks

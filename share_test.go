@@ -513,3 +513,170 @@ func TestShareAddOverlapRestoresConfig(t *testing.T) {
 		t.Fatal("add made a link for a refused entry")
 	}
 }
+
+const starShare = "[shares.s]\nsource = \"~/src/skills\"\ninto = \"~/dst\"\nitems = \"*\"\nexclude = [\"skip\"]\n"
+
+// starSandbox fills source with a, b, skip (excluded) and .DS_Store.
+func starSandbox(t *testing.T) (src, dst string, cfg *Config) {
+	t.Helper()
+	h, cfg, err := shareSandbox(t, starShare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, dst = filepath.Join(h, "src", "skills"), filepath.Join(h, "dst")
+	for _, d := range []string{"a", "b", "skip"} {
+		os.MkdirAll(filepath.Join(src, d), 0o755)
+	}
+	os.WriteFile(filepath.Join(src, ".DS_Store"), nil, 0o644)
+	return src, dst, cfg
+}
+
+// items = "*" exists so a new skill needs no config edit: apply links every
+// entry but excludes and dotfiles, and links one added later on the next run.
+func TestStarLinksEveryEntry(t *testing.T) {
+	src, dst, cfg := starSandbox(t)
+	if out, code := quiet(t, func() int { return cmdShare(cfg, "apply", nil) }); code != 0 {
+		t.Fatalf("apply exited %d:\n%s", code, out)
+	}
+	for _, d := range []string{"a", "b"} {
+		if got, _ := os.Readlink(filepath.Join(dst, d)); got != filepath.Join(src, d) {
+			t.Errorf("dst/%s points at %q", d, got)
+		}
+	}
+	for _, d := range []string{"skip", ".DS_Store"} {
+		if _, err := os.Lstat(filepath.Join(dst, d)); !os.IsNotExist(err) {
+			t.Errorf("apply linked %s", d)
+		}
+	}
+	os.MkdirAll(filepath.Join(src, "c"), 0o755)
+	if out, code := quiet(t, func() int { return cmdShare(cfg, "apply", nil) }); code != 0 || !strings.Contains(out, "linked    ~/dst/c") {
+		t.Fatalf("second apply exited %d, want c linked:\n%s", code, out)
+	}
+}
+
+// An entry deleted from source, or excluded after apply, leaves a link no
+// share asks for: doctor must flag it and prune remove it, and nothing else.
+func TestStarDanglingAndExcludedAreOrphans(t *testing.T) {
+	src, dst, cfg := starSandbox(t)
+	quiet(t, func() int { return cmdShare(cfg, "apply", nil) })
+	os.RemoveAll(filepath.Join(src, "b"))
+	os.Symlink(filepath.Join(src, "skip"), filepath.Join(dst, "skip"))
+
+	doc, code := quiet(t, func() int { return cmdDoctor(cfg) })
+	for _, d := range []string{"b", "skip"} {
+		if !strings.Contains(doc, "FAIL  share s orphan    ~/dst/"+d) {
+			t.Errorf("doctor does not flag dst/%s:\n%s", d, doc)
+		}
+	}
+	if code != 1 {
+		t.Errorf("doctor exited %d, want 1", code)
+	}
+	if out, code := quiet(t, func() int { return cmdShare(cfg, "prune", nil) }); code != 0 {
+		t.Fatalf("prune exited %d:\n%s", code, out)
+	}
+	for _, d := range []string{"b", "skip"} {
+		if _, err := os.Lstat(filepath.Join(dst, d)); !os.IsNotExist(err) {
+			t.Errorf("prune left dst/%s", d)
+		}
+	}
+	if got, _ := os.Readlink(filepath.Join(dst, "a")); got != filepath.Join(src, "a") {
+		t.Errorf("prune touched dst/a: %q", got)
+	}
+}
+
+// A source that is gone must not read as "every link is an orphan", or one
+// prune during an unmounted volume removes them all.
+func TestStarUnreadableSource(t *testing.T) {
+	src, dst, cfg := starSandbox(t)
+	quiet(t, func() int { return cmdShare(cfg, "apply", nil) })
+	os.Rename(src, src+".away")
+	out, _ := quiet(t, func() int { return cmdShare(cfg, "plan", nil) })
+	if !strings.Contains(out, "no source ~/src/skills is not a readable folder, so ~/dst/* links nothing") || strings.Contains(out, "orphan") {
+		t.Fatalf("plan with no source:\n%s", out)
+	}
+	if _, code := quiet(t, func() int { return cmdShare(cfg, "apply", nil) }); code != 1 {
+		t.Errorf("apply with no source exited %d, want 1", code)
+	}
+	if _, err := os.Lstat(filepath.Join(dst, "*")); !os.IsNotExist(err) {
+		t.Error("apply made a link named *")
+	}
+	quiet(t, func() int { return cmdShare(cfg, "prune", nil) })
+	if _, err := os.Lstat(filepath.Join(dst, "a")); err != nil {
+		t.Error("prune removed a link while source was gone")
+	}
+}
+
+// share rm on a "*" share has no items entry to drop, so it excludes the
+// entry; add takes it back out of exclude.
+func TestStarAddAndRmEditExclude(t *testing.T) {
+	h, cfg, err := shareSandbox(t, "[shares.s]\nsource = \"~/src/skills\"\ninto = \"~/dst\"\nitems = \"*\"  # all\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig, _ := os.ReadFile(configPath())
+	src, dst := filepath.Join(h, "src", "skills"), filepath.Join(h, "dst")
+	for _, d := range []string{"a", "b"} {
+		os.MkdirAll(filepath.Join(src, d), 0o755)
+	}
+	quiet(t, func() int { return cmdShare(cfg, "apply", nil) })
+
+	if out, code := quiet(t, func() int { return cmdShareEdit(cfg, "rm", []string{"s", "a"}) }); code != 0 {
+		t.Fatalf("rm exited %d:\n%s", code, out)
+	}
+	if _, err := os.Lstat(filepath.Join(dst, "a")); !os.IsNotExist(err) {
+		t.Error("rm left dst/a")
+	}
+	want := strings.Replace(string(orig), "items = \"*\"  # all\n", "items = \"*\"  # all\nexclude = [\"a\"]\n", 1)
+	if got, _ := os.ReadFile(configPath()); string(got) != want {
+		t.Fatalf("config after rm:\n%s\nwant:\n%s", got, want)
+	}
+	quiet(t, func() int { return cmdShareEdit(reload(t), "rm", []string{"s", "b"}) })
+	if got, _ := os.ReadFile(configPath()); !strings.Contains(string(got), `exclude = ["a", "b"]`) {
+		t.Fatalf("second rm:\n%s", got)
+	}
+
+	if out, code := quiet(t, func() int { return cmdShareEdit(reload(t), "add", []string{"s", "a"}) }); code != 0 {
+		t.Fatalf("add exited %d:\n%s", code, out)
+	}
+	if got, _ := os.Readlink(filepath.Join(dst, "a")); got != filepath.Join(src, "a") {
+		t.Errorf("add left dst/a pointing at %q", got)
+	}
+	if got, _ := os.ReadFile(configPath()); !strings.Contains(string(got), `exclude = ["b"]`) {
+		t.Fatalf("config after add:\n%s", got)
+	}
+	if out, code := quiet(t, func() int { return cmdShareEdit(reload(t), "rm", []string{"s", "nope"}) }); code != 1 {
+		t.Fatalf("rm of an entry not in source exited %d:\n%s", code, out)
+	}
+	os.WriteFile(filepath.Join(src, ".hidden"), nil, 0o644)
+	before, _ := os.ReadFile(configPath())
+	if _, code := quiet(t, func() int { return cmdShareEdit(reload(t), "rm", []string{"s", ".hidden"}) }); code != 1 {
+		t.Fatalf("rm of a dotfile exited %d, want 1", code)
+	}
+	if got, _ := os.ReadFile(configPath()); string(got) != string(before) {
+		t.Fatalf("rm of a dotfile edited the config:\n%s", got)
+	}
+}
+
+func TestStarConfigErrors(t *testing.T) {
+	const star = "[shares.s]\nsource = \"~/src\"\ninto = \"~/dst\"\nitems = \"*\"\n"
+	cases := []struct{ name, toml, want string }{
+		{"exclude without star", folderShare + "exclude = [\"x\"]\n", "`exclude` needs `items = \"*\"`"},
+		{"items a string", "[shares.s]\nsource = \"~/src\"\ninto = \"~/dst\"\nitems = \"all\"\n", `write "*" or an array`},
+		{"exclude with a slash", star + "exclude = [\"a/b\"]\n", `item "a/b" must be one name`},
+		{"two stars into one folder", star + "[shares.t]\nsource = \"~/other\"\ninto = \"~/dst\"\nitems = \"*\"\n", "both link every entry into ~/dst"},
+		{"named item under a star", star + "[shares.t]\nsource = \"~/other\"\ninto = \"~/dst\"\nitems = [\"x\"]\n", `add "x" to [shares.s] exclude`},
+		{"file link under a star", star + "[shares.t]\nsource = \"~/f\"\nlinks = [\"~/dst/x\"]\n", `add "x" to [shares.s] exclude`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, _, err := shareSandbox(t, c.toml)
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err = %v, want %q", err, c.want)
+			}
+		})
+	}
+	// An excluded name may belong to another share.
+	if _, _, err := shareSandbox(t, star+"exclude = [\"x\"]\n[shares.t]\nsource = \"~/other\"\ninto = \"~/dst\"\nitems = [\"x\"]\n"); err != nil {
+		t.Fatalf("excluded name claimed by another share: %v", err)
+	}
+}
