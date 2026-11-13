@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -362,7 +363,13 @@ func codexHooksJSON(current []byte, handlers []hookHandler, dir, exe string) ([]
 
 // ---- pi ----
 
-func piExtensionPath() string {
+// piExtensionPath puts the extension in pi's base home when the config has a
+// [tools.pi] block, as Codex's entries go in its base; profile homes reach it
+// through `shared`. Without the block it goes where pi itself looks.
+func piExtensionPath(cfg *Config) string {
+	if t, ok := cfg.Tools["pi"]; ok {
+		return filepath.Join(t.Base, "extensions", "kennel-hooks.ts")
+	}
 	dir := os.Getenv("PI_CODING_AGENT_DIR")
 	if dir == "" {
 		dir = filepath.Join(home(), ".pi", "agent")
@@ -502,7 +509,7 @@ func planHooks(cfg *Config, handlers []hookHandler, exe string) ([]hookOutput, e
 		out = append(out, hookOutput{Target: "codex", Path: path, Want: want, Current: cur, Exists: exists})
 	}
 	if cfg.Hooks.Pi {
-		path := piExtensionPath()
+		path := piExtensionPath(cfg)
 		cur, err := os.ReadFile(path)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, err
@@ -615,6 +622,41 @@ func cmdHooks(cfg *Config, args []string) int {
 			fmt.Println("          new or changed entries run once trusted in Codex's /hooks")
 		}
 	}
+	return reportUnshared(cfg)
+}
+
+// unsharedHookHomes names each profile home that never sees a generated hook
+// file: the file goes in the tool's base, and a profile home reaches it only
+// through the base entry that holds it (hooks.json, extensions) being in
+// that tool's `shared`.
+func unsharedHookHomes(cfg *Config) []string {
+	var out []string
+	for _, w := range []struct {
+		tool, entry string
+		on          bool
+	}{{"codex", "hooks.json", cfg.Hooks.Codex}, {"pi", "extensions", cfg.Hooks.Pi}} {
+		t, ok := cfg.Tools[w.tool]
+		if !w.on || !ok || slices.Contains(t.Shared, w.entry) {
+			continue
+		}
+		for _, prof := range cfg.profileNames() {
+			if h := cfg.Profiles[prof][w.tool]; h != "" {
+				out = append(out, fmt.Sprintf("[profiles.%s] %s home %s never sees %s: add %q to [tools.%s] shared", prof, w.tool, tilde(h), tilde(filepath.Join(t.Base, w.entry)), w.entry, w.tool))
+			}
+		}
+	}
+	return out
+}
+
+// reportUnshared prints each unshared home and returns the exit status.
+func reportUnshared(cfg *Config) int {
+	missed := unsharedHookHomes(cfg)
+	for _, m := range missed {
+		fmt.Fprintf(os.Stderr, "kennel: %s\n", m)
+	}
+	if len(missed) > 0 {
+		return 1
+	}
 	return 0
 }
 
@@ -666,7 +708,7 @@ func hooksPlan(cfg *Config, handlers []hookHandler, exe string) int {
 		fmt.Fprintf(os.Stderr, "kennel: %d hook script(s) unreadable or carrying an unknown tag; they stay claude-only\n", problems)
 		return 1
 	}
-	return 0
+	return reportUnshared(cfg)
 }
 
 func trunc(s string, n int) string {

@@ -40,7 +40,7 @@ const usage = `kennel — route directories to coding-agent profiles
 const configHelp = `Config: ~/.config/kennel/config.toml (KENNEL_CONFIG_DIR moves the directory)
 
   [tools.claude]
-  # env = "CLAUDE_CONFIG_DIR"   built in for claude and codex; set it to override
+  # env = "CLAUDE_CONFIG_DIR"   built in for claude, codex and pi; set it to override
   base   = "~/.claude"          # the home every profile's shared items link to
   shared = ["skills", "CLAUDE.md", "settings.json"]
 
@@ -71,7 +71,7 @@ A hook script reaches Codex and pi only with a "# kennel-hook: portable" or
 "# kennel-hook: adapter" line in its first 20 lines.
 
 A tool missing from a profile gets its variable unset, so it uses its default
-home. A tool kennel has no built-in variable for needs env = "...".
+home. Claude, Codex and pi have built-in variables; any other tool needs env = "...".
 Routes live beside the config in ~/.config/kennel/routes.
 `
 

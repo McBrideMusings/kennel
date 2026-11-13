@@ -77,3 +77,27 @@ func TestRoutesFileRoundTrip(t *testing.T) {
 		t.Errorf("resolve(~/my  docs/sub) = %q, want personal", p)
 	}
 }
+
+// A pi block with no env key must route PI_CODING_AGENT_DIR, or pi started in
+// a work directory logs into the personal account.
+func TestEnvRoutesPiBuiltIn(t *testing.T) {
+	h, cfg, err := shareSandbox(t, "[tools.pi]\nbase = \"~/.pi/agent\"\nshared = []\n[profiles.work]\npi = \"~/.pi-work\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := cfg.Tools["pi"]; p.Env != "PI_CODING_AGENT_DIR" || p.EnvSource != "built-in" {
+		t.Fatalf("pi env = %q (%s), want PI_CODING_AGENT_DIR (built-in)", p.Env, p.EnvSource)
+	}
+	os.WriteFile(routesPath(), []byte("~/Work work\n"), 0o644)
+	work := filepath.Join(h, "Work", "repo")
+	os.MkdirAll(work, 0o755)
+	t.Chdir(work)
+	out, _ := quiet(t, func() int { return cmdEnv(cfg) })
+	if want := "export PI_CODING_AGENT_DIR=" + shellQuote(filepath.Join(h, ".pi-work")) + "\n"; !strings.Contains(out, want) {
+		t.Errorf("kennel env in ~/Work printed:\n%s\nwant a line %q", out, want)
+	}
+	t.Chdir(h)
+	if out, _ := quiet(t, func() int { return cmdEnv(cfg) }); !strings.Contains(out, "unset PI_CODING_AGENT_DIR\n") {
+		t.Errorf("kennel env in ~ printed:\n%s\nwant unset PI_CODING_AGENT_DIR", out)
+	}
+}

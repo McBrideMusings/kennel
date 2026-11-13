@@ -10,6 +10,7 @@ Each CLI reads its home from one environment variable, read once at startup:
 | --- | --- | --- |
 | Claude Code | `CLAUDE_CONFIG_DIR` | `~/.claude` |
 | Codex | `CODEX_HOME` | `~/.codex` |
+| Pi | `PI_CODING_AGENT_DIR` | `~/.pi/agent` |
 
 A zsh hook runs `kennel env` on every `cd` and exports or unsets those variables for the
 new directory, so a CLI started from that shell, or from anything it launches, gets the
@@ -28,7 +29,7 @@ echo 'command -v kennel >/dev/null && eval "$(kennel init zsh)"' >> ~/.zshrc
 
 ```toml
 [tools.claude]
-# env = "CLAUDE_CONFIG_DIR"   built in for claude and codex; set it to override
+# env = "CLAUDE_CONFIG_DIR"   built in for claude, codex and pi; set it to override
 base   = "~/.claude"
 shared = ["skills", "CLAUDE.md", "settings.json"]
 
@@ -109,8 +110,13 @@ neither key set, `kennel hooks apply` writes nothing.
 ```toml
 [hooks]
 codex = true    # entries in <codex base>/hooks.json
-pi    = true    # ~/.pi/agent/extensions/kennel-hooks.ts ($PI_CODING_AGENT_DIR moves it)
+pi    = true    # <pi base>/extensions/kennel-hooks.ts
 ```
+
+Without a `[tools.pi]` block the pi extension goes in `$PI_CODING_AGENT_DIR` when the shell
+sets it, else `~/.pi/agent`. A profile home sees the generated file only when the base entry
+holding it, `hooks.json` for Codex or `extensions` for pi, is in that tool's `shared`;
+`hooks plan` and `hooks apply` name each profile home that misses it and exit 1.
 
 A script in `<claude base>/hooks/` leaves Claude only when one of its first 20 lines is a
 tag; a script with none is claude-only:
@@ -187,6 +193,16 @@ to come from the shell.
 `.codex-global-state.json` belong to one install and stay unshared. Codex's own
 `--profile` flag is unrelated: it picks a settings overlay inside one home and never
 changes `CODEX_HOME`.
+
+**Pi.** The login is `auth.json` (API keys and OAuth credentials) inside
+`PI_CODING_AGENT_DIR`. `sessions/` and `trust.json` (the projects trusted to load their
+`.pi` config) belong to one account, and `models-store.json` and `crashes.json` are caches;
+keep them all out of `shared`. `settings.json`, `keybindings.json`, `models.json`,
+`mcp.json`, `AGENTS.md`, `SYSTEM.md`, `APPEND_SYSTEM.md`, `extensions/`, `skills/`,
+`prompts/` and `themes/` are user configuration and can be shared; `npm/` and `git/` hold
+the Pi packages `settings.json` declares, so share them with it, and `bin/` holds the `fd`
+and `rg` Pi downloads. `install/` holds Pi's own releases, which the `pi` launcher finds from
+its own path, never from `PI_CODING_AGENT_DIR`; leave it in `~/.pi/agent`, unshared.
 
 Log a new profile in once with its variable set, for example
 `CODEX_HOME=~/.codex-work codex login`.

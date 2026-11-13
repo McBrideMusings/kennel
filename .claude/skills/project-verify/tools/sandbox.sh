@@ -7,14 +7,14 @@ trap 'rm -rf "$S"' EXIT
 BIN=$S/kennel
 (cd "$REPO" && go build -o "$BIN" .) || { echo "FAIL build"; exit 1; }
 export HOME=$S KENNEL_CONFIG_DIR=$S/.config/kennel
-unset CLAUDE_CONFIG_DIR CODEX_HOME
+unset CLAUDE_CONFIG_DIR CODEX_HOME PI_CODING_AGENT_DIR
 fails=0
 check() { # check <name> <command...>: passes when the command exits 0
   local name=$1; shift
   if "$@" >/dev/null 2>&1; then echo "PASS $name"; else echo "FAIL $name"; fails=$((fails + 1)); fi
 }
 
-mkdir -p "$S/.claude/skills" "$S/.codex/skills" "$S/Work/repo" "$KENNEL_CONFIG_DIR"
+mkdir -p "$S/.claude/skills" "$S/.codex/skills" "$S/.pi/agent/skills" "$S/Work/repo" "$KENNEL_CONFIG_DIR"
 touch "$S/.claude/CLAUDE.md"
 cat > "$KENNEL_CONFIG_DIR/config.toml" <<'EOF'
 [tools.claude]
@@ -23,10 +23,14 @@ shared = ["skills", "CLAUDE.md"]
 [tools.codex]
 base   = "~/.codex"
 shared = ["skills"]
+[tools.pi]
+base   = "~/.pi/agent"
+shared = ["skills"]
 [profiles.personal]
 [profiles.work]
 claude = "~/.claude-work"
 codex  = "~/.codex-work"
+pi     = "~/.pi-work"
 EOF
 
 check "route add" "$BIN" route add "$S/Work" work --permanent
@@ -37,10 +41,13 @@ git -C "$S/Work/repo" init -q && git -C "$S/Work/repo" -c user.name=t -c user.em
 git -C "$S/Work/repo" worktree add -q "$S/wt"
 check "worktree follows its repo" bash -c "cd '$S/wt' && '$BIN' which | grep -q '^profile	work'"
 check "env exports work homes" bash -c "cd '$S/Work' && '$BIN' env | grep -q \"CODEX_HOME='$S/.codex-work'\""
+check "env exports pi's built-in variable" bash -c "cd '$S/Work' && '$BIN' env | grep -q \"PI_CODING_AGENT_DIR='$S/.pi-work'\""
 check "expired route pruned" bash -c "! grep -q '~/old' '$KENNEL_CONFIG_DIR/routes'"
 check "outside any route unsets" bash -c "cd '$S' && '$BIN' env | grep -q '^unset CLAUDE_CONFIG_DIR'"
+check "outside any route unsets pi" bash -c "cd '$S' && '$BIN' env | grep -q '^unset PI_CODING_AGENT_DIR'"
 check "link creates homes" "$BIN" link
 check "link made the symlink" test "$(readlink "$S/.claude-work/skills")" = "$S/.claude/skills"
+check "link made pi's symlink" test "$(readlink "$S/.pi-work/skills")" = "$S/.pi/agent/skills"
 check "homes lists each profile" bash -c "'$BIN' homes codex | grep -q '^personal	$S/.codex$'"
 check "zsh hook sets and clears" bash -c "zsh -f -c 'export HOME=$S KENNEL_CONFIG_DIR=$KENNEL_CONFIG_DIR; eval \"\$($BIN init zsh)\"; cd $S/Work; [[ \$CLAUDE_CONFIG_DIR == $S/.claude-work ]] || exit 1; cd $S; [[ -z \${CLAUDE_CONFIG_DIR-} ]]'"
 check "doctor passes with hook vars" bash -c "cd '$S/Work' && eval \"\$('$BIN' env)\" && '$BIN' doctor"

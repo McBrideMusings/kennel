@@ -186,6 +186,37 @@ func TestHooksApplyPiWritesExtension(t *testing.T) {
 	}
 }
 
+// With kennel routing pi, the shell's PI_CODING_AGENT_DIR names a profile
+// home; the extension still belongs in pi's base, as Codex's entries do.
+func TestHooksApplyPiUsesPiBase(t *testing.T) {
+	h, cfg := hookSandbox(t, "[hooks]\npi = true\n[tools.pi]\nbase = \"~/pibase\"\nshared = [\"extensions\"]\n[profiles.work]\npi = \"~/.pi-work\"\n")
+	t.Setenv("PI_CODING_AGENT_DIR", filepath.Join(h, ".pi-work"))
+	if _, code := quiet(t, func() int { return cmdHooks(cfg, []string{"apply"}) }); code != 0 {
+		t.Errorf("apply exit = %d, want 0", code)
+	}
+	if _, err := os.Stat(filepath.Join(h, "pibase", "extensions", "kennel-hooks.ts")); err != nil {
+		t.Errorf("extension not in pi base: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(h, ".pi-work")); !os.IsNotExist(err) {
+		t.Errorf("apply wrote into the profile home named by PI_CODING_AGENT_DIR")
+	}
+}
+
+// A profile whose home cannot see the generated file runs none of the
+// shared hooks, so plan and apply must name it and fail.
+func TestHooksReportUnsharedProfileHome(t *testing.T) {
+	_, cfg := hookSandbox(t, "[hooks]\ncodex = true\npi = true\n[tools.pi]\nbase = \"~/pibase\"\nshared = []\n[profiles.work]\npi = \"~/.pi-work\"\ncodex = \"~/.codex-work\"\n")
+	got := unsharedHookHomes(cfg)
+	if len(got) != 2 || !strings.Contains(got[0], `add "hooks.json" to [tools.codex] shared`) || !strings.Contains(got[1], `add "extensions" to [tools.pi] shared`) {
+		t.Fatalf("unsharedHookHomes = %q", got)
+	}
+	for _, sub := range []string{"plan", "apply"} {
+		if _, code := quiet(t, func() int { return cmdHooks(cfg, []string{sub}) }); code != 1 {
+			t.Errorf("hooks %s exit = %d, want 1", sub, code)
+		}
+	}
+}
+
 // runHookCmd feeds payload to `kennel hook <target> -- <argv>` and returns
 // what it printed and its exit status.
 func runHookCmd(t *testing.T, cfg *Config, target string, payload any, argv ...string) (string, int) {
