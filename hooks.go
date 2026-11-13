@@ -628,7 +628,7 @@ func cmdHooks(cfg *Config, args []string) int {
 // unsharedHookHomes names each profile home that never sees a generated hook
 // file: the file goes in the tool's base, and a profile home reaches it only
 // through the base entry that holds it (hooks.json, extensions) being in
-// that tool's `shared`.
+// the shared list that home uses: its profile's own, else the tool's.
 func unsharedHookHomes(cfg *Config) []string {
 	var out []string
 	for _, w := range []struct {
@@ -636,13 +636,20 @@ func unsharedHookHomes(cfg *Config) []string {
 		on          bool
 	}{{"codex", "hooks.json", cfg.Hooks.Codex}, {"pi", "extensions", cfg.Hooks.Pi}} {
 		t, ok := cfg.Tools[w.tool]
-		if !w.on || !ok || slices.Contains(t.Shared, w.entry) {
+		if !w.on || !ok {
 			continue
 		}
 		for _, prof := range cfg.profileNames() {
-			if h := cfg.Profiles[prof][w.tool]; h != "" {
-				out = append(out, fmt.Sprintf("[profiles.%s] %s home %s never sees %s: add %q to [tools.%s] shared", prof, w.tool, tilde(h), tilde(filepath.Join(t.Base, w.entry)), w.entry, w.tool))
+			h := cfg.Profiles[prof][w.tool]
+			items, own := cfg.sharedItems(prof, w.tool)
+			if h == "" || slices.Contains(items, w.entry) {
+				continue
 			}
+			list := fmt.Sprintf("[tools.%s] shared", w.tool)
+			if own {
+				list = fmt.Sprintf("[profiles.%s] %s shared", prof, w.tool)
+			}
+			out = append(out, fmt.Sprintf("[profiles.%s] %s home %s never sees %s: add %q to %s", prof, w.tool, tilde(h), tilde(filepath.Join(t.Base, w.entry)), w.entry, list))
 		}
 	}
 	return out

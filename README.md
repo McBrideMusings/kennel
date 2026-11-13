@@ -45,7 +45,7 @@ shared = ["skills", "AGENTS.md", "config.toml"]
 
 [profiles.work]
 claude = "~/.claude-work"
-codex  = "~/.codex-work"
+codex  = { home = "~/.codex-work", shared = ["skills"] }
 ```
 
 - `base` and `shared` are required for every tool. `env` is required only for a tool
@@ -55,6 +55,12 @@ codex  = "~/.codex-work"
   symlinks every shared item in it back to the base, so skills, instructions and settings
   are edited once. Everything not shared stays per profile: the login and the account's
   own state.
+- A profile's tool is a home path, which links the tool's `shared` items, or a table with
+  `home` and its own `shared`, which replaces the tool's list for that home: above,
+  `~/.codex-work` links only `skills` and keeps its own `AGENTS.md`. When an item leaves the
+  list a home uses, `kennel link` and `kennel doctor` report its link to the base as
+  unshared and exit 1; kennel never removes it, so delete it by hand to give the profile
+  its own copy.
 
 ## Shares
 
@@ -141,7 +147,8 @@ pi    = true    # <pi base>/extensions/kennel-hooks.ts
 
 Without a `[tools.pi]` block the pi extension goes in `$PI_CODING_AGENT_DIR` when the shell
 sets it, else `~/.pi/agent`. A profile home sees the generated file only when the base entry
-holding it, `hooks.json` for Codex or `extensions` for pi, is in that tool's `shared`;
+holding it, `hooks.json` for Codex or `extensions` for pi, is in the shared list that home
+uses;
 `hooks plan` and `hooks apply` name each profile home that misses it and exit 1.
 
 A script in `<claude base>/hooks/` leaves Claude only when one of its first 20 lines is a

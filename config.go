@@ -86,7 +86,61 @@ type Config struct {
 	Hooks    HooksOptIn
 	Shares   map[string]*Share
 	Tools    map[string]*Tool
-	Profiles map[string]map[string]string // profile → tool → home
+	Profiles map[string]map[string]string   // profile → tool → home
+	Shared   map[string]map[string][]string // profile → tool → its own shared list, when it has one
+}
+
+// profileTool is one tool's entry in a [profiles.<p>] table: a home string,
+// which shares the tool's own list, or { home = "...", shared = [...] },
+// whose list replaces it for that home. problem holds what is wrong with an
+// entry of any other shape, for loadConfig to report with its names.
+type profileTool struct {
+	home    string
+	shared  []string
+	table   bool
+	problem string
+}
+
+func (p *profileTool) UnmarshalTOML(data any) error {
+	switch d := data.(type) {
+	case string:
+		p.home = d
+	case map[string]any:
+		p.table = true
+		for k := range d {
+			if k != "home" && k != "shared" {
+				p.problem = fmt.Sprintf("has unknown key %q; a table takes home and shared", k)
+				return nil
+			}
+		}
+		h, isPath := d["home"].(string)
+		list, isList := d["shared"].([]any)
+		switch {
+		case d["home"] != nil && !isPath:
+			p.problem = "home must be a path"
+			return nil
+		case d["shared"] != nil && !isList:
+			p.problem = "shared must be an array of names"
+			return nil
+		}
+		if !isPath || !isList {
+			p.problem = "needs both `home` (a path) and `shared` (an array of names; [] shares nothing)"
+			return nil
+		}
+		p.home = h
+		p.shared = []string{}
+		for _, e := range list {
+			name, ok := e.(string)
+			if !ok {
+				p.problem = fmt.Sprintf("shared holds %v, which is not a string", e)
+				return nil
+			}
+			p.shared = append(p.shared, name)
+		}
+	default:
+		p.problem = "must be a home path or { home = \"...\", shared = [...] }"
+	}
+	return nil
 }
 
 type rawTool struct {
@@ -104,10 +158,10 @@ type rawShare struct {
 }
 
 type rawConfig struct {
-	Hooks    HooksOptIn                   `toml:"hooks"`
-	Shares   map[string]rawShare          `toml:"shares"`
-	Tools    map[string]rawTool           `toml:"tools"`
-	Profiles map[string]map[string]string `toml:"profiles"`
+	Hooks    HooksOptIn                        `toml:"hooks"`
+	Shares   map[string]rawShare               `toml:"shares"`
+	Tools    map[string]rawTool                `toml:"tools"`
+	Profiles map[string]map[string]profileTool `toml:"profiles"`
 }
 
 func home() string {
@@ -165,7 +219,7 @@ func loadConfig() (*Config, error) {
 		return nil, fmt.Errorf("%s: unknown key %s", path, und[0])
 	}
 
-	cfg := &Config{Path: path, Hooks: raw.Hooks, Tools: map[string]*Tool{}, Profiles: map[string]map[string]string{}, Shares: map[string]*Share{}}
+	cfg := &Config{Path: path, Hooks: raw.Hooks, Tools: map[string]*Tool{}, Profiles: map[string]map[string]string{}, Shared: map[string]map[string][]string{}, Shares: map[string]*Share{}}
 	var problems []string
 	for name, rt := range raw.Tools {
 		t := &Tool{Name: name, Env: rt.Env, EnvSource: "config", Base: rt.Base, Shared: rt.Shared}
@@ -193,14 +247,26 @@ func loadConfig() (*Config, error) {
 		if prof == "" || strings.ContainsAny(prof, " \t") {
 			problems = append(problems, fmt.Sprintf("[profiles.%q] needs a name without spaces; routes rows are read by whitespace", prof))
 		}
-		cfg.Profiles[prof] = map[string]string{}
-		for tool, h := range homes {
+		cfg.Profiles[prof], cfg.Shared[prof] = map[string]string{}, map[string][]string{}
+		for tool, pt := range homes {
 			t, ok := cfg.Tools[tool]
 			if !ok {
 				problems = append(problems, fmt.Sprintf("[profiles.%s] names tool %q, which has no [tools.%s] block", prof, tool, tool))
 				continue
 			}
-			h = expand(h)
+			if pt.problem != "" {
+				problems = append(problems, fmt.Sprintf("[profiles.%s] %s %s", prof, tool, pt.problem))
+				continue
+			}
+			if pt.table {
+				cfg.Shared[prof][tool] = pt.shared
+				for _, item := range pt.shared {
+					if !validName(item) {
+						problems = append(problems, fmt.Sprintf("[profiles.%s] %s shared item %q must be one name inside the base home", prof, tool, item))
+					}
+				}
+			}
+			h := expand(pt.home)
 			if h == t.Base {
 				problems = append(problems, fmt.Sprintf("[profiles.%s] %s home is the base home; leave %s out of the profile to use the base", prof, tool, tool))
 			}
@@ -338,6 +404,15 @@ func loadConfig() (*Config, error) {
 		return nil, fmt.Errorf("%s:\n  %s", path, strings.Join(problems, "\n  "))
 	}
 	return cfg, nil
+}
+
+// sharedItems is the list of base items a profile's home for tool links to:
+// the profile's own list when it has one (own is then true), else the tool's.
+func (c *Config) sharedItems(prof, tool string) (items []string, own bool) {
+	if items, ok := c.Shared[prof][tool]; ok {
+		return items, true
+	}
+	return c.Tools[tool].Shared, false
 }
 
 func (c *Config) toolNames() []string {

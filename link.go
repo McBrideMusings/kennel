@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -18,6 +19,7 @@ const (
 	baseMissing             // the base home has no such item to link to
 	linkOrphan              // a symlink into a folder share's source whose name is not in its items
 	linkRecorded            // a share link in the links record that no share asks for any more
+	linkUnshared            // a profile home's link to a base item the profile does not share
 )
 
 const shareUsage = `usage: kennel share plan|apply|undo|prune [share [item]]
@@ -51,6 +53,8 @@ func (c linkCheck) describe() string {
 		return fmt.Sprintf("blocked   %s is a real file or directory, not a link to %s", tilde(c.path), tilde(c.target))
 	case linkOrphan:
 		return fmt.Sprintf("orphan    %s → %s (not in the share's items; `kennel share prune` removes it)", tilde(c.path), tilde(c.target))
+	case linkUnshared:
+		return fmt.Sprintf("unshared  not shared by [profiles.%s]: %s → %s (remove the link by hand to give the profile its own)", strings.SplitN(c.label, "/", 2)[0], tilde(c.path), tilde(c.target))
 	case linkRecorded:
 		return fmt.Sprintf("orphan    %s → %s (no share lists it any more; `kennel share prune` removes it)", tilde(c.path), tilde(c.target))
 	case baseMissing:
@@ -64,7 +68,8 @@ func (c linkCheck) describe() string {
 }
 
 // profilePairs lists every shared item of every profile home (or of one
-// profile when only is set) with the base item it should link to.
+// profile when only is set) with the base item it should link to. A
+// profile's own shared list replaces the tool's.
 func profilePairs(cfg *Config, only string) []pair {
 	var out []pair
 	for _, prof := range cfg.profileNames() {
@@ -76,9 +81,58 @@ func profilePairs(cfg *Config, only string) []pair {
 			if !ok {
 				continue
 			}
-			t := cfg.Tools[tool]
-			for _, item := range t.Shared {
-				out = append(out, pair{label: prof + "/" + tool, path: filepath.Join(h, item), target: filepath.Join(t.Base, item)})
+			base := cfg.Tools[tool].Base
+			items, _ := cfg.sharedItems(prof, tool)
+			for _, item := range items {
+				out = append(out, pair{label: prof + "/" + tool, path: filepath.Join(h, item), target: filepath.Join(base, item)})
+			}
+		}
+	}
+	return out
+}
+
+// unsharedChecks finds each link in a profile home (or one profile's, when
+// only is set) that points at the base item of the same name although the
+// profile does not share it, as when an item leaves a shared list after
+// `kennel link`. A path a share links, or the links record holds, belongs
+// to that share and is skipped. link and doctor report the rest; nothing
+// removes them.
+func unsharedChecks(cfg *Config, only string) []linkCheck {
+	shared := map[string]bool{}
+	for _, p := range sharePairs(cfg) {
+		shared[p.path] = true
+	}
+	rec, _ := readRecord()
+	for p := range rec {
+		shared[p] = true
+	}
+	var out []linkCheck
+	for _, prof := range cfg.profileNames() {
+		if only != "" && prof != only {
+			continue
+		}
+		for _, tool := range cfg.toolNames() {
+			h, ok := cfg.Profiles[prof][tool]
+			if !ok {
+				continue
+			}
+			entries, err := os.ReadDir(h)
+			if err != nil {
+				continue
+			}
+			base := cfg.Tools[tool].Base
+			items, _ := cfg.sharedItems(prof, tool)
+			for _, e := range entries {
+				if e.Type()&os.ModeSymlink == 0 || slices.Contains(items, e.Name()) {
+					continue
+				}
+				path, target := filepath.Join(h, e.Name()), filepath.Join(base, e.Name())
+				if shared[path] {
+					continue
+				}
+				if actual, err := os.Readlink(path); err == nil && actual == target {
+					out = append(out, linkCheck{pair: pair{label: prof + "/" + tool, path: path, target: target}, state: linkUnshared, actual: actual})
+				}
 			}
 		}
 	}
@@ -232,8 +286,9 @@ func createLinks(checks []linkCheck, kind string) (bad int, err error) {
 }
 
 // cmdLink creates each profile home and the symlinks its shared items need.
-// It never moves or deletes anything: a blocked or wrong item is reported and
-// left for the user, and the exit status says so.
+// It never moves or deletes anything: a blocked or wrong item, or a link to
+// an item the profile no longer shares, is reported and left for the user,
+// and the exit status says so.
 func cmdLink(cfg *Config, only string) int {
 	if only != "" {
 		if _, ok := cfg.Profiles[only]; !ok {
@@ -258,7 +313,7 @@ func cmdLink(cfg *Config, only string) int {
 			}
 		}
 	}
-	bad, err := createLinks(checkPairs(profilePairs(cfg, only)), "link")
+	bad, err := createLinks(append(checkPairs(profilePairs(cfg, only)), unsharedChecks(cfg, only)...), "link")
 	if err != nil {
 		return failf("%v", err)
 	}
