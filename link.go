@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type linkState int
@@ -15,7 +16,10 @@ const (
 	linkElsewhere           // a symlink to some other target
 	linkBlocked             // a real file or directory sits where the link goes
 	baseMissing             // the base home has no such item to link to
+	linkOrphan              // a symlink into a folder share's source whose name is not in its items
 )
+
+const shareUsage = "usage: kennel share plan|apply|undo|prune"
 
 // pair is one symlink that should exist: path links to target. label names
 // whose link it is, for output.
@@ -40,6 +44,8 @@ func (c linkCheck) describe() string {
 		return fmt.Sprintf("wrong     %s → %s (should link to %s)", tilde(c.path), c.actual, tilde(c.target))
 	case linkBlocked:
 		return fmt.Sprintf("blocked   %s is a real file or directory, not a link to %s", tilde(c.path), tilde(c.target))
+	case linkOrphan:
+		return fmt.Sprintf("orphan    %s → %s (not in the share's items; `kennel share prune` removes it)", tilde(c.path), tilde(c.target))
 	default:
 		return fmt.Sprintf("no source %s does not exist, so %s has nothing to link to", tilde(c.target), tilde(c.path))
 	}
@@ -88,6 +94,61 @@ func sharePairs(cfg *Config) []pair {
 		}
 	}
 	return out
+}
+
+// orphanChecks finds the links sharePairs cannot see: a symlink inside a
+// folder share's into that points inside its source, under a name no share
+// lists. Each comes back as linkOrphan with target set to where it points.
+// Real files and links pointing anywhere else are not orphans.
+func orphanChecks(cfg *Config) []linkCheck {
+	listed := map[string]bool{}
+	for _, p := range sharePairs(cfg) {
+		listed[p.path] = true
+	}
+	var out []linkCheck
+	for _, name := range cfg.shareNames() {
+		s := cfg.Shares[name]
+		if s.Into == "" {
+			continue
+		}
+		entries, err := os.ReadDir(s.Into)
+		if err != nil {
+			continue
+		}
+		src := filepath.Clean(s.Source) + string(filepath.Separator)
+		for _, e := range entries {
+			path := filepath.Join(s.Into, e.Name())
+			if listed[path] || e.Type()&os.ModeSymlink == 0 {
+				continue
+			}
+			actual, err := os.Readlink(path)
+			if err != nil {
+				continue
+			}
+			if !filepath.IsAbs(actual) {
+				actual = filepath.Join(s.Into, actual)
+			}
+			actual = filepath.Clean(actual)
+			if !strings.HasPrefix(actual, src) {
+				continue
+			}
+			listed[path] = true
+			out = append(out, linkCheck{pair: pair{label: "share " + name, path: path, target: actual}, state: linkOrphan, actual: actual})
+		}
+	}
+	return out
+}
+
+// removeLinks deletes each check's symlink and logs it as verb.
+func removeLinks(checks []linkCheck, verb string) error {
+	for _, c := range checks {
+		if err := os.Remove(c.path); err != nil {
+			return fmt.Errorf("remove %s: %v", c.path, err)
+		}
+		logf("share: %s %s -> %s", verb, c.path, c.target)
+		fmt.Printf("%-9s %s\n", verb, tilde(c.path))
+	}
+	return nil
 }
 
 // checkPairs inspects every pair without changing anything.
@@ -186,24 +247,24 @@ func cmdLink(cfg *Config, only string) int {
 	return 0
 }
 
-// cmdShare plans, applies or undoes the cross-tool links in [shares]. Like
-// link, it never moves or deletes a real file; undo removes only symlinks
-// that point at a configured share's source.
+// cmdShare plans, applies, undoes or prunes the cross-tool links in
+// [shares]. Like link, it never moves or deletes a real file. undo removes
+// every link the shares list plus every orphan; prune removes orphans only.
 func cmdShare(cfg *Config, action string) int {
-	if action != "plan" && action != "apply" && action != "undo" {
-		return failf("usage: kennel share plan|apply|undo")
+	if action != "plan" && action != "apply" && action != "undo" && action != "prune" {
+		return failf(shareUsage)
 	}
-	checks := checkPairs(sharePairs(cfg))
-	if len(checks) == 0 {
+	if len(cfg.Shares) == 0 {
 		fmt.Println("nothing to do: no [shares] in the config")
 		return 0
 	}
+	checks := checkPairs(sharePairs(cfg))
+	orphans := orphanChecks(cfg)
 	switch action {
 	case "plan":
-		for _, c := range checks {
+		for _, c := range append(checks, orphans...) {
 			fmt.Println(c.describe())
 		}
-		return 0
 	case "apply":
 		bad, err := createLinks(checks, "share")
 		if err != nil {
@@ -213,21 +274,25 @@ func cmdShare(cfg *Config, action string) int {
 			fmt.Fprintf(os.Stderr, "kennel: %d share link(s) need a hand fix; nothing was moved or deleted\n", bad)
 			return 1
 		}
-		return 0
 	case "undo":
+		var ours []linkCheck
 		for _, c := range checks {
-			if c.state != linkOK {
-				continue
+			if c.state == linkOK {
+				ours = append(ours, c)
 			}
-			if err := os.Remove(c.path); err != nil {
-				return failf("remove %s: %v", c.path, err)
-			}
-			logf("share: removed %s -> %s", c.path, c.target)
-			fmt.Printf("removed   %s\n", tilde(c.path))
 		}
-		return 0
+		if err := removeLinks(append(ours, orphans...), "removed"); err != nil {
+			return failf("%v", err)
+		}
+	case "prune":
+		if len(orphans) == 0 {
+			fmt.Println("no orphaned links")
+		}
+		if err := removeLinks(orphans, "pruned"); err != nil {
+			return failf("%v", err)
+		}
 	}
-	return failf("usage: kennel share plan|apply|undo")
+	return 0
 }
 
 func isDir(p string) bool {

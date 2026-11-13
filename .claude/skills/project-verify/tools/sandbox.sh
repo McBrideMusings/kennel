@@ -69,6 +69,18 @@ echo mine > "$S/.pi/agent/AGENTS.md"
 check "share apply reports a blocked file" bash -c "! '$BIN' share apply"
 check "blocked file left alone" test "$(cat "$S/.pi/agent/AGENTS.md")" = mine
 check "doctor fails on a blocked share" bash -c "cd '$S' && ! '$BIN' doctor"
+rm "$S/.pi/agent/AGENTS.md"
+"$BIN" share apply >/dev/null
+mkdir -p "$S/.claude/skills/dropped"
+ln -s "$S/.claude/skills/dropped" "$S/.agents/skills/dropped"
+ln -s /elsewhere "$S/.agents/skills/foreign"
+echo mine > "$S/.agents/skills/realfile"
+check "share plan reports the orphan" bash -c "'$BIN' share plan | grep -q '^orphan    ~/.agents/skills/dropped '"
+check "share plan leaves foreign links and real files out" bash -c "! '$BIN' share plan | grep -E '^orphan .*(foreign|realfile)'"
+check "doctor fails on an orphan" bash -c "cd '$S' && '$BIN' doctor | grep -q '^FAIL  share skills orphan'"
+check "share prune removes the orphan" bash -c "'$BIN' share prune | grep -q '^pruned    ~/.agents/skills/dropped' && ! test -L '$S/.agents/skills/dropped'"
+check "prune left the listed link, foreign link and real file" bash -c "test -L '$S/.agents/skills/diagnose' && test \"\$(readlink '$S/.agents/skills/foreign')\" = /elsewhere && test \"\$(cat '$S/.agents/skills/realfile')\" = mine"
+check "prune logged" grep -q 'share: pruned .*/.agents/skills/dropped' "$S/.local/state/kennel/kennel.log"
 check "log written" test -s "$S/.local/state/kennel/kennel.log"
 
 [ "$fails" -eq 0 ]

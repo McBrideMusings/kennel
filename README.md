@@ -72,9 +72,14 @@ name with no `/`.
 
 | Command | Does |
 | --- | --- |
-| `kennel share plan` | prints every share link as ok, missing, wrong, blocked or no source; changes nothing |
+| `kennel share plan` | prints every share link as ok, missing, wrong, blocked, no source or orphan; changes nothing |
 | `kennel share apply` | creates each missing link and any parent directory; exits 1 if a link needs a hand fix |
-| `kennel share undo` | removes only symlinks that point at a configured share's source |
+| `kennel share undo` | removes only symlinks that point at a configured share's source, orphans included |
+| `kennel share prune` | removes orphans only |
+
+An orphan is a symlink in a folder share's `into` that points inside its `source` under a
+name no share lists, as when an item is dropped from `items` after `apply`. `plan` and
+`doctor` report each one, `doctor` as a FAIL.
 
 Like `link`, `share apply` never moves or deletes a file: a real file or directory where a
 link goes is reported as blocked and left alone. Profile homes need nothing extra, since
