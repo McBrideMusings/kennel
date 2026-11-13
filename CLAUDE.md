@@ -4,7 +4,8 @@ Go CLI that routes directories to coding-agent profiles; see README.md for the m
 
 - One package, `main`. `config.go` loads and validates config.toml, `routes.go` owns the
   routes file and resolution, `when.go` parses expiry phrases, `link.go` checks and creates
-  profile symlinks, `hooks.go` generates Codex and pi hook files from Claude's hook list,
+  profile symlinks and share links, `tomledit.go` edits one share array in config.toml's
+  text for `share add` and `share rm`, `hooks.go` generates Codex and pi hook files from Claude's hook list,
   `hookrun.go` is the `kennel hook` wrapper, `main.go` holds the commands and the zsh hook.
 - `kennel env` runs on every `cd` in every shell. Keep it to one config read, one routes
   read and one `git rev-parse`.

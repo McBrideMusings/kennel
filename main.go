@@ -24,6 +24,8 @@ const usage = `kennel — route directories to coding-agent profiles
   kennel link [profile]                    create profile homes and their shared symlinks
   kennel share plan|apply|undo|prune [share [item]]
                                            show, create or remove the cross-tool links in [shares]
+  kennel share add|rm <share> <item>... | --link <path>...
+                                           add or remove a share's items or links and their links
   kennel hooks plan|apply                  show or write Claude's shared hooks for Codex and pi ([hooks])
   kennel hooks list codex|pi               the shared hooks as JSON, wrapped for that tool
   kennel hook codex|pi -- <command>        run one Claude hook on that tool's payload
@@ -125,6 +127,9 @@ func run(args []string) int {
 	case "share":
 		if len(args) < 2 {
 			return failf(shareUsage)
+		}
+		if args[1] == "add" || args[1] == "rm" {
+			return cmdShareEdit(cfg, args[1], args[2:])
 		}
 		return cmdShare(cfg, args[1], args[2:])
 	case "hooks":

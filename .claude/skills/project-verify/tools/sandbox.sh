@@ -86,6 +86,13 @@ check "share undo <share> <item> removes only that link" bash -c "'$BIN' share u
 check "share apply <share> relinks only that share" bash -c "'$BIN' share undo instructions && '$BIN' share apply skills && test -L '$S/.agents/skills/diagnose' && ! test -e '$S/.pi/agent/AGENTS.md'"
 check "share undo <unknown> exits 1 naming it" bash -c "'$BIN' share undo nope 2>&1 | grep -q 'shares.nope' && ! '$BIN' share undo nope 2>/dev/null"
 check "share undo <share> <unknown item> changes nothing" bash -c "! '$BIN' share undo skills nope 2>/dev/null && test -L '$S/.agents/skills/diagnose'"
+cp "$KENNEL_CONFIG_DIR/config.toml" "$S/config.before"
+check "share add <share> <item> edits items and links it" bash -c "'$BIN' share add skills dropped && grep -qx 'items  = \[\"diagnose\", \"dropped\"\]' '$KENNEL_CONFIG_DIR/config.toml' && test \"\$(readlink '$S/.agents/skills/dropped')\" = '$S/.claude/skills/dropped'"
+check "share rm <share> <item> removes the link, then the item" bash -c "'$BIN' share rm skills dropped && ! test -e '$S/.agents/skills/dropped' && cmp -s '$S/config.before' '$KENNEL_CONFIG_DIR/config.toml'"
+check "share add --link links the new path" bash -c "'$BIN' share add instructions --link '~/.codex/AGENTS.md' && grep -qx 'links  = \[\"~/.pi/agent/AGENTS.md\", \"~/.codex/AGENTS.md\"\]' '$KENNEL_CONFIG_DIR/config.toml' && test \"\$(readlink '$S/.codex/AGENTS.md')\" = '$S/.claude/AGENTS.md'"
+check "share rm --link removes it" bash -c "'$BIN' share rm instructions --link '$S/.codex/AGENTS.md' && ! test -e '$S/.codex/AGENTS.md' && cmp -s '$S/config.before' '$KENNEL_CONFIG_DIR/config.toml'"
+check "share rm refuses to empty a share" bash -c "! '$BIN' share rm skills diagnose 2>/dev/null && test -L '$S/.agents/skills/diagnose' && cmp -s '$S/config.before' '$KENNEL_CONFIG_DIR/config.toml'"
+check "share add and rm logged" bash -c "grep -q 'share: added dropped to \[shares.skills\] items' '$S/.local/state/kennel/kennel.log' && grep -q 'share: removed .*/.codex/AGENTS.md -> ' '$S/.local/state/kennel/kennel.log'"
 check "log written" test -s "$S/.local/state/kennel/kennel.log"
 
 [ "$fails" -eq 0 ]

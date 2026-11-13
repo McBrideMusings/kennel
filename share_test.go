@@ -305,3 +305,159 @@ func TestShareScopeLeavesOtherSharesOrphan(t *testing.T) {
 		t.Fatal("prune t left its own orphan")
 	}
 }
+
+const editableShare = `# my shares
+[shares.s]   # skills for every tool
+source = "~/src/skills"
+into   = "~/dst"
+items  = [
+  "keep",  # always
+]
+# end
+`
+
+func reload(t *testing.T) *Config {
+	t.Helper()
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
+func readLog(t *testing.T, h string) string {
+	t.Helper()
+	b, _ := os.ReadFile(filepath.Join(h, ".local", "state", "kennel", "kennel.log"))
+	return string(b)
+}
+
+// Adding a skill by hand means editing config.toml and running apply; add and
+// rm do both, and must keep every comment and line of the file they did not
+// mean to change.
+func TestShareAddAndRmItems(t *testing.T) {
+	h, cfg, err := shareSandbox(t, editableShare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig, _ := os.ReadFile(configPath())
+	src, dst := filepath.Join(h, "src", "skills"), filepath.Join(h, "dst")
+	for _, d := range []string{"keep", "a", "b"} {
+		os.MkdirAll(filepath.Join(src, d), 0o755)
+	}
+
+	if out, code := quiet(t, func() int { return cmdShareEdit(cfg, "add", []string{"s", "a", "b"}) }); code != 0 {
+		t.Fatalf("add exited %d:\n%s", code, out)
+	}
+	for _, d := range []string{"a", "b"} {
+		if got, _ := os.Readlink(filepath.Join(dst, d)); got != filepath.Join(src, d) {
+			t.Errorf("add left dst/%s pointing at %q", d, got)
+		}
+	}
+	added := strings.Replace(string(orig), "  \"keep\",  # always\n", "  \"keep\",  # always\n  \"a\",\n  \"b\",\n", 1)
+	if got, _ := os.ReadFile(configPath()); string(got) != added {
+		t.Fatalf("config after add:\n%s\nwant:\n%s", got, added)
+	}
+
+	// b's link now points elsewhere: rm drops b from items, leaves the link,
+	// reports it and exits 1.
+	os.Remove(filepath.Join(dst, "b"))
+	os.Symlink("/elsewhere", filepath.Join(dst, "b"))
+	if out, code := quiet(t, func() int { return cmdShareEdit(reload(t), "rm", []string{"s", "a", "b"}) }); code != 1 || !strings.Contains(out, "wrong     ~/dst/b → /elsewhere") {
+		t.Fatalf("rm over a foreign link exited %d, want 1 with a report:\n%s", code, out)
+	}
+	if _, err := os.Lstat(filepath.Join(dst, "a")); !os.IsNotExist(err) {
+		t.Error("rm left dst/a")
+	}
+	if got, _ := os.Readlink(filepath.Join(dst, "b")); got != "/elsewhere" {
+		t.Errorf("rm changed a foreign link to %q", got)
+	}
+	if got, _ := os.ReadFile(configPath()); string(got) != string(orig) {
+		t.Fatalf("config after rm:\n%s\nwant:\n%s", got, orig)
+	}
+
+	log := readLog(t, h)
+	for _, want := range []string{
+		"share: " + filepath.Join(dst, "a") + " -> " + filepath.Join(src, "a"),
+		"share: removed " + filepath.Join(dst, "a") + " -> ",
+		"share: added a to [shares.s] items",
+		"share: removed b from [shares.s] items",
+	} {
+		if !strings.Contains(log, want) {
+			t.Errorf("change log lacks %q:\n%s", want, log)
+		}
+	}
+}
+
+func TestShareAddAndRmLinks(t *testing.T) {
+	h, cfg, err := shareSandbox(t, fileShare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(h, "src", "AGENTS.md")
+	os.MkdirAll(filepath.Dir(source), 0o755)
+	os.WriteFile(source, []byte("x"), 0o644)
+	if _, code := quiet(t, func() int { return cmdShare(cfg, "apply", nil) }); code != 0 {
+		t.Fatal("apply failed")
+	}
+
+	if out, code := quiet(t, func() int { return cmdShareEdit(cfg, "add", []string{"i", "--link", "~/c/AGENTS.md"}) }); code != 0 {
+		t.Fatalf("add --link exited %d:\n%s", code, out)
+	}
+	if got, _ := os.Readlink(filepath.Join(h, "c", "AGENTS.md")); got != source {
+		t.Fatalf("add --link left c/AGENTS.md pointing at %q", got)
+	}
+	if got, _ := os.ReadFile(configPath()); !strings.Contains(string(got), `links = ["~/a/AGENTS.md", "~/b/AGENTS.md", "~/c/AGENTS.md"]`) {
+		t.Fatalf("config after add --link:\n%s", got)
+	}
+
+	if out, code := quiet(t, func() int {
+		return cmdShareEdit(reload(t), "rm", []string{"i", "--link", filepath.Join(h, "a", "AGENTS.md")})
+	}); code != 0 {
+		t.Fatalf("rm --link exited %d:\n%s", code, out)
+	}
+	if _, err := os.Lstat(filepath.Join(h, "a", "AGENTS.md")); !os.IsNotExist(err) {
+		t.Error("rm --link left the link")
+	}
+	if got, _ := os.ReadFile(configPath()); !strings.Contains(string(got), `links = ["~/b/AGENTS.md", "~/c/AGENTS.md"]`) {
+		t.Fatalf("config after rm --link:\n%s", got)
+	}
+}
+
+// A real file where add wants a link stays byte-identical and the command
+// exits 1; rm refuses to empty a share, which would leave a config that does
+// not load.
+func TestShareAddRmRefusals(t *testing.T) {
+	h, cfg, err := shareSandbox(t, editableShare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, dst := filepath.Join(h, "src", "skills"), filepath.Join(h, "dst")
+	os.MkdirAll(filepath.Join(src, "a"), 0o755)
+	os.MkdirAll(dst, 0o755)
+	os.WriteFile(filepath.Join(dst, "a"), []byte("mine"), 0o644)
+	if _, code := quiet(t, func() int { return cmdShareEdit(cfg, "add", []string{"s", "a"}) }); code != 1 {
+		t.Fatalf("add over a real file exited %d, want 1", code)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dst, "a")); string(b) != "mine" {
+		t.Fatalf("add changed the real file to %q", b)
+	}
+
+	before, _ := os.ReadFile(configPath())
+	for _, args := range [][]string{
+		{"s", "keep", "a"},      // would empty items
+		{"s", "nope"},           // not listed
+		{"s", "--link", "~/x"},  // folder share takes no --link
+		{"s", "missing-in-src"}, // add: no source to link to
+	} {
+		action := "rm"
+		if args[1] == "missing-in-src" || args[1] == "--link" {
+			action = "add"
+		}
+		if _, code := quiet(t, func() int { return cmdShareEdit(reload(t), action, args) }); code != 1 {
+			t.Errorf("%s %v exited %d, want 1", action, args, code)
+		}
+	}
+	if after, _ := os.ReadFile(configPath()); string(after) != string(before) {
+		t.Fatalf("a refused command changed the config:\n%s", after)
+	}
+}

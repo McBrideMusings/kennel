@@ -84,6 +84,15 @@ name, an orphan's name in its `into`, or a file share's link path (a relative pa
 from the current directory). An unknown share or item
 exits 1 and changes nothing.
 
+`kennel share add skills grill-me research` adds each item to the share's `items` and links
+it; `kennel share rm skills grill-me` removes its link, only if it points into the share's
+`source`, and drops it from `items`. A real file or a link elsewhere at that path is
+reported, left alone, and makes `rm` exit 1. A file share takes link paths after `--link`:
+`kennel share add instructions --link ~/.gemini/AGENTS.md`. Both edit `config.toml` line by
+line, so every comment and key outside the edited array stays as written, and log each
+config edit and link to kennel's change log. `add` refuses an item missing from `source`;
+`rm` refuses to empty a share (run `share undo` and delete the table by hand).
+
 An orphan is a symlink in a folder share's `into` that points inside its `source` under a
 name no share lists, as when an item is dropped from `items` after `apply`. `plan` and
 `doctor` report each one, `doctor` as a FAIL.
