@@ -89,7 +89,8 @@ type fileCommit struct {
 }
 
 // fileLog lists the commits that touched a file, newest first; a file no
-// repository holds, or one git does not track, has none.
+// repository holds, one git does not track, or one in a repository with no
+// commits yet has none.
 func fileLog(arg string) ([]fileCommit, error) {
 	f, err := holdingRepo(arg)
 	if err != nil || f.git == nil {
@@ -97,6 +98,9 @@ func fileLog(arg string) ([]fileCommit, error) {
 	}
 	out, err := f.git("log", "--format=%H%x09%h%x09%aI%x09%s", "--", f.rel)
 	if err != nil {
+		if unborn(f.git) {
+			return []fileCommit{}, nil
+		}
 		return nil, err
 	}
 	commits := []fileCommit{}
@@ -107,6 +111,16 @@ func fileLog(arg string) ([]fileCommit, error) {
 		}
 	}
 	return commits, nil
+}
+
+// unborn reports whether HEAD names a branch that has no commit yet.
+func unborn(git func(args ...string) (string, error)) bool {
+	ref, err := git("symbolic-ref", "-q", "HEAD")
+	if err != nil {
+		return false
+	}
+	_, err = git("show-ref", "--verify", "-q", strings.TrimSpace(ref))
+	return err != nil
 }
 
 func cmdFile(args []string) int {
@@ -151,14 +165,21 @@ func cmdFile(args []string) int {
 	return failf(fileUsage)
 }
 
-// splitRev splits path@rev at the last @ when what follows names no folder;
-// a path that exists with its @ and does not exist without it stays whole.
+// splitRev splits path@rev at the last @, so a revision may hold a /
+// (origin/main). The whole argument stays a path when it names something and
+// the part before the @ does not: it exists, or, for a rev holding a /, its
+// folder exists (a file deleted from a folder named x@y).
 func splitRev(arg string) (path, rev string) {
 	i := strings.LastIndex(arg, "@")
-	if i <= 0 || i == len(arg)-1 || strings.Contains(arg[i+1:], "/") {
+	if i <= 0 || i == len(arg)-1 {
 		return arg, ""
 	}
-	if _, err := os.Lstat(expand(arg)); err == nil {
+	whole := expand(arg)
+	_, err := os.Lstat(whole)
+	if err != nil && strings.Contains(arg[i+1:], "/") {
+		_, err = os.Lstat(filepath.Dir(whole))
+	}
+	if err == nil {
 		if _, err := os.Lstat(expand(arg[:i])); err != nil {
 			return arg, ""
 		}
@@ -188,9 +209,15 @@ func fileShow(arg string) int {
 	if f.git == nil {
 		return failf("%s is in no git repository", tilde(f.path))
 	}
+	if _, err := f.git("rev-parse", "--verify", "--quiet", "--end-of-options", rev+"^{commit}"); err != nil {
+		return failf("%s: unknown revision", rev)
+	}
 	body, err := f.git("cat-file", "blob", rev+":"+f.rel)
 	if err != nil {
-		return failf("%s does not exist at %s", tilde(f.path), rev)
+		if _, e := f.git("cat-file", "-e", rev+":"+f.rel); e != nil {
+			return failf("%s does not exist at %s", tilde(f.path), rev)
+		}
+		return failf("%v", err)
 	}
 	fmt.Print(body)
 	return 0

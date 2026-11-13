@@ -238,3 +238,78 @@ func TestFileLogAndShow(t *testing.T) {
 		t.Fatalf("file show now = %d %q", code, out)
 	}
 }
+
+func TestFileLogEmptyRepo(t *testing.T) {
+	h, _ := harnessSandbox(t)
+	dir := filepath.Join(h, "fresh")
+	os.MkdirAll(dir, 0o755)
+	gitT(t, dir, "init", "-q")
+	f := filepath.Join(dir, "CLAUDE.md")
+	os.WriteFile(f, []byte("new\n"), 0o644)
+	gitT(t, dir, "add", "CLAUDE.md")
+	if out, code := quiet(t, func() int { return run([]string{"file", "log", f, "--json"}) }); code != 0 || strings.TrimSpace(out) != "[]" {
+		t.Fatalf("file log in a repo with no commits = %d %q", code, out)
+	}
+}
+
+func TestFileShowRevisions(t *testing.T) {
+	_, proj := harnessSandbox(t)
+	f := filepath.Join(proj, "CLAUDE.md")
+	gitT(t, proj, "update-ref", "refs/remotes/origin/main", "HEAD")
+	if out, code := quiet(t, func() int { return run([]string{"file", "show", f + "@origin/main"}) }); code != 0 || out != "project guidance\n" {
+		t.Fatalf("file show @origin/main = %d %q", code, out)
+	}
+	if msg, code := capture(t, &os.Stderr, func() int { return run([]string{"file", "show", f + "@nope"}) }); code != 1 || !strings.Contains(msg, "nope: unknown revision") {
+		t.Fatalf("file show at a bad revision = %d %q", code, msg)
+	}
+	added := filepath.Join(proj, "added.md")
+	os.WriteFile(added, []byte("later\n"), 0o644)
+	if msg, code := capture(t, &os.Stderr, func() int { return run([]string{"file", "show", added + "@HEAD"}) }); code != 1 || !strings.Contains(msg, "added.md does not exist at HEAD") {
+		t.Fatalf("file show of a file missing at the revision = %d %q", code, msg)
+	}
+}
+
+func TestSplitRev(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "only@whole"), nil, 0o644)
+	os.MkdirAll(filepath.Join(dir, "box@v1"), 0o755)
+	os.WriteFile(filepath.Join(dir, "box@v1", "f.md"), nil, 0o644)
+	os.WriteFile(filepath.Join(dir, "both@HEAD"), nil, 0o644)
+	os.WriteFile(filepath.Join(dir, "both"), nil, 0o644)
+	for _, c := range []struct{ arg, path, rev string }{
+		{"a.md@HEAD", "a.md", "HEAD"},
+		{"a.md@origin/main", "a.md", "origin/main"},
+		{"a.md", "a.md", ""},
+		{"a.md@", "a.md@", ""},
+		{"@HEAD", "@HEAD", ""},
+		{dir + "/only@whole", dir + "/only@whole", ""},
+		{dir + "/box@v1/f.md", dir + "/box@v1/f.md", ""},
+		{dir + "/box@v1/gone.md", dir + "/box@v1/gone.md", ""},
+		{dir + "/both@HEAD", dir + "/both", "HEAD"},
+	} {
+		if p, r := splitRev(c.arg); p != c.path || r != c.rev {
+			t.Errorf("splitRev(%q) = %q, %q; want %q, %q", c.arg, p, r, c.path, c.rev)
+		}
+	}
+}
+
+// file log and file show follow a link into the vault to the vault's history.
+func TestFileLogThroughVaultLink(t *testing.T) {
+	h := vaultSandbox(t)
+	skill := filepath.Join(h, ".claude", "skills", "recomp")
+	os.MkdirAll(skill, 0o755)
+	os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("original\n"), 0o644)
+	if out, code := vaultRun(t, "add", "~/.claude/skills/recomp"); code != 0 {
+		t.Fatalf("vault add exited %d: %s", code, out)
+	}
+	f := filepath.Join(skill, "SKILL.md")
+	out, code := quiet(t, func() int { return run([]string{"file", "log", f, "--json"}) })
+	var commits []fileCommit
+	if code != 0 || json.Unmarshal([]byte(out), &commits) != nil || len(commits) != 1 || !strings.Contains(commits[0].Subject, "add skills/recomp") {
+		t.Fatalf("file log through the vault link = %d %s", code, out)
+	}
+	os.WriteFile(f, []byte("edited\n"), 0o644)
+	if out, code := quiet(t, func() int { return run([]string{"file", "show", f + "@" + commits[0].Short}) }); code != 0 || out != "original\n" {
+		t.Fatalf("file show through the vault link = %d %q", code, out)
+	}
+}

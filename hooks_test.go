@@ -84,12 +84,18 @@ func snapshot(t *testing.T, dir string) map[string]string {
 
 func quiet(t *testing.T, f func() int) (string, int) {
 	t.Helper()
-	old := os.Stdout
+	return capture(t, &os.Stdout, f)
+}
+
+// capture runs f with *file pointed at a pipe and returns what f wrote there.
+func capture(t *testing.T, file **os.File, f func() int) (string, int) {
+	t.Helper()
+	old := *file
 	r, w, _ := os.Pipe()
-	os.Stdout = w
+	*file = w
+	defer func() { *file = old }()
 	code := f()
 	w.Close()
-	os.Stdout = old
 	b, _ := io.ReadAll(r)
 	return string(b), code
 }

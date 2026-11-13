@@ -228,7 +228,7 @@ commits say `session unknown`.
 | Command | Does |
 | --- | --- |
 | `kennel harness show <skills\|guidance\|permissions\|hooks\|mcp> [--scope global\|<dir>] [--harness claude\|codex\|pi] [--json]` | lists one section for one harness: a Project block for the folder's git root, then a Global block from the home its route picks |
-| `kennel file log <path> [--json]` | the commits that touched the file, from the vault's history when the file is in the vault, else from its git repository; `[]` when no repository tracks it |
+| `kennel file log <path> [--json]` | the commits that touched the file, from the vault's history when the file is in the vault, else from its git repository; `[]` when no repository tracks it or the repository has no commits |
 | `kennel file show <path>[@<rev>]` | the file's text at a commit |
 
 `--scope global` reads each harness's base home with no profile. Codex hooks that run one of
