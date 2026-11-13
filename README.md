@@ -193,6 +193,8 @@ the folder holds no `.git`. The repository has no remote.
 | `kennel vault rm <item>` | moves the item to `~/.Trash` and commits its removal; refuses while a link points at it, listing each link |
 | `kennel vault copy <item> <path>` | writes the item's files to `<path>` (inside it when it is a folder) and records `"<path>" = "vault:<item>@<sha>"` in config.toml's `[copied]` table, changing no other line |
 | `kennel vault update <path>` | rewrites a recorded copy to the item's last commit and its `[copied]` sha; refuses a copy whose files differ from the commit it records |
+| `kennel vault unlink <path>` | replaces a link to a vault item with the item's files at its last commit and records it in `[copied]`, so it updates like a copy |
+| `kennel vault ls [--json]` | the vault's skills and snippets, and each `[copied]` copy with the item's last commit; a copy the vault moved ahead of names its `update` command |
 | `kennel vault log <item>` | the item's commits: short sha, time, message |
 | `kennel vault show <item>[@<rev>]` | the item at a commit: a file's text, or each file of a skill under a `==> path <==` header |
 | `kennel vault commit --session <id> --harness <h> <file>` | commits one file an agent edited, naming the harness and session |
@@ -230,8 +232,17 @@ The tool takes an optional `directory` (left out: the Global scope) and `harness
 `codex` or `pi`; left out: Claude). The app shows one scope and one harness at a time: a
 file tree, the selected file's text and its commits. It reads everything by running kennel
 commands through the server's app-only `kennel` tool, which runs only `harness show`,
-`harness recent`, `file log` and `file show`, and reads with `file log` and `file show` only
-files a `harness show` it ran has listed.
+`harness recent`, `file log`, `file show` and `vault ls`, `add`, `install`, `unlink`, `copy`,
+`update` and `rm`. It acts only on what it ran a listing for: `file log` and `file show` read
+files a `harness show` or `vault ls` listed; `vault add`, `unlink` and `update` take a skill
+folder a Skills page listed; `vault copy` writes into a skills folder one listed; `vault
+install --project` names a project the app opened.
+
+The Vault group lists Skills and Snippets. On a vault skill, **Add** links it into the
+harness's skills for the scope shown, **Copy** (in a project) writes a recorded copy, and
+**Remove** runs `vault rm` after asking. **Save a skill…** moves a skill from the Skills page
+into the vault, after asking. On the Skills page a vault-linked skill shows the vault icon
+and **Unlink and copy**; a copy whose vault item has a newer commit shows **Update**.
 
 To add it to Claude Desktop, put this in
 `~/Library/Application Support/Claude/claude_desktop_config.json` and restart Claude Desktop:

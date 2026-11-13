@@ -62,9 +62,10 @@ type harnessShow struct {
 
 // harnessBlock is the Project or Global half of a page.
 type harnessBlock struct {
-	Scope   string `json:"scope"` // "project" or "global"
-	Path    string `json:"path"`
-	Entries any    `json:"entries"`
+	Scope   string   `json:"scope"` // "project" or "global"
+	Path    string   `json:"path"`
+	Dirs    []string `json:"dirs,omitempty"` // Skills: the folders the harness loads skills from, in its order
+	Entries any      `json:"entries"`
 }
 
 type skillEntry struct {
@@ -213,7 +214,11 @@ func (sc *harnessScope) show(section string) (*harnessShow, error) {
 		if err != nil {
 			return nil, err
 		}
-		out.Blocks = append(out.Blocks, harnessBlock{Scope: s, Path: path, Entries: entries})
+		b := harnessBlock{Scope: s, Path: path, Entries: entries}
+		if section == "skills" {
+			b.Dirs = sc.skillDirs(s)
+		}
+		out.Blocks = append(out.Blocks, b)
 	}
 	return out, nil
 }

@@ -36,6 +36,8 @@ const usage = `kennel — route directories to coding-agent profiles
   kennel vault rm <item>                   remove a vault item no link points at
   kennel vault copy <item> <path>          copy a vault item into a project, recorded in [copied]
   kennel vault update <path>               bring a recorded copy to the item's last commit
+  kennel vault unlink <path>               replace a link to a vault item with a recorded copy
+  kennel vault ls [--json]                 the vault's skills and snippets, and each copy's state
   kennel vault log <item>                  a vault skill or snippet's commits
   kennel vault show <item>[@<rev>]         a vault item's files at a commit
   kennel vault commit --session <id> --harness <h> <file>

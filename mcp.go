@@ -18,11 +18,14 @@ import (
 
 // kennel mcp is a stdio MCP server with one MCP App: the harness tool opens
 // ui://kennel/harness on one scope and harness, and the app reads everything
-// else through the kennel tool, which runs one read-only kennel command. So
-// every action in the app is a kennel command an agent can run itself.
+// else through the kennel tool, which runs one kennel command. So every
+// action in the app is a kennel command an agent can run itself.
 //
-// file log and file show read only files a harness show run by this server
-// listed: the app reads what it was shown, never any path a caller names.
+// The app acts only on what this server showed it: file log and file show
+// read only files a harness show or vault ls listed; vault add, unlink and
+// update take only a skill folder a harness show listed, vault copy writes
+// only into a skills folder one listed, and vault install --project only into
+// a scope one resolved.
 
 const (
 	appURI  = "ui://kennel/harness"
@@ -38,6 +41,13 @@ var appCommands = [][]string{
 	{"harness", "recent"},
 	{"file", "log"},
 	{"file", "show"},
+	{"vault", "ls"},
+	{"vault", "add"},
+	{"vault", "install"},
+	{"vault", "unlink"},
+	{"vault", "copy"},
+	{"vault", "update"},
+	{"vault", "rm"},
 }
 
 // appHTML is the app page with marked and DOMPurify inlined: the host's
@@ -58,16 +68,39 @@ func appHTML() (string, error) {
 	return html, nil
 }
 
-// shown is every file a harness show run by this server listed.
+// shown is every file, skill folder, skills folder and scope a harness show
+// or vault ls run by this server listed.
 type shown struct {
-	mu    sync.Mutex
-	files map[string]bool
+	mu        sync.Mutex
+	files     map[string]bool
+	skills    map[string]bool // skill folders on a Skills page
+	skillDirs map[string]bool // the folders a harness loads skills from
+	scopes    map[string]bool // project directories a show resolved
+	items     map[string]bool // vault items a vault ls listed
 }
 
-// add records the files in one harness show --json output.
+func newShown() *shown {
+	return &shown{files: map[string]bool{}, skills: map[string]bool{}, skillDirs: map[string]bool{}, scopes: map[string]bool{}, items: map[string]bool{}}
+}
+
+// add records what one harness show --json or vault ls --json output lists.
 func (s *shown) add(out string) {
 	var show struct {
+		Section string `json:"section"`
+		Scope   struct {
+			Dir string `json:"dir"`
+		} `json:"scope"`
+		Skills []struct {
+			Item  string   `json:"item"`
+			Path  string   `json:"path"`
+			Files []string `json:"files"`
+		} `json:"skills"`
+		Snippets []struct {
+			Item string `json:"item"`
+			Path string `json:"path"`
+		} `json:"snippets"`
 		Blocks []struct {
+			Dirs    []string `json:"dirs"`
 			Entries []struct {
 				Path   string   `json:"path"`
 				Files  []string `json:"files"`
@@ -81,8 +114,27 @@ func (s *shown) add(out string) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if show.Scope.Dir != "" {
+		s.scopes[filepath.Clean(show.Scope.Dir)] = true
+	}
+	for _, it := range show.Skills {
+		s.items[it.Item] = true
+		for _, f := range it.Files {
+			s.files[filepath.Join(it.Path, f)] = true
+		}
+	}
+	for _, it := range show.Snippets {
+		s.items[it.Item] = true
+		s.files[filepath.Clean(it.Path)] = true
+	}
 	for _, b := range show.Blocks {
+		for _, d := range b.Dirs {
+			s.skillDirs[filepath.Clean(d)] = true
+		}
 		for _, e := range b.Entries {
+			if show.Section == "skills" && e.Path != "" {
+				s.skills[filepath.Clean(e.Path)] = true
+			}
 			for _, f := range e.Files {
 				s.files[filepath.Join(e.Path, f)] = true
 			}
@@ -98,14 +150,21 @@ func (s *shown) add(out string) {
 	}
 }
 
-func (s *shown) has(path string) bool {
+func (s *shown) has(set map[string]bool, path string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.files[filepath.Clean(path)]
+	return set[filepath.Clean(path)]
+}
+
+func (s *shown) hasItem(item string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.items[item]
 }
 
 func newMCPServer() *mcp.Server {
-	seen := &shown{files: map[string]bool{}}
+	seen := newShown()
+	destructive := true
 	s := mcp.NewServer(&mcp.Implementation{Name: "kennel", Version: "0.1.0"}, nil)
 
 	s.AddResource(&mcp.Resource{URI: appURI, Name: "harness", Title: "kennel harness", MIMEType: appMIME},
@@ -132,10 +191,10 @@ func newMCPServer() *mcp.Server {
 
 	s.AddTool(&mcp.Tool{
 		Name:        "kennel",
-		Description: "Run one read-only kennel command for the harness app: harness show, harness recent, file log or file show.",
+		Description: "Run one kennel command for the harness app: harness show, harness recent, file log, file show, or vault ls, add, install, unlink, copy, update or rm. vault add moves the original folder to the Trash; vault rm moves the vault item there.",
 		InputSchema: json.RawMessage(`{"type":"object","required":["args"],"properties":{` +
 			`"args":{"type":"array","items":{"type":"string"},"description":"The command's words after kennel"}}}`),
-		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true},
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: &destructive},
 		Meta:        mcp.Meta{"ui": map[string]any{"resourceUri": appURI, "visibility": []string{"app"}}},
 	}, func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		return kennelTool(ctx, req, seen)
@@ -213,18 +272,72 @@ func kennelTool(ctx context.Context, req *mcp.CallToolRequest, seen *shown) (*mc
 		if len(pos) != 1 {
 			return toolError(fileUsage), nil
 		}
-		if path, _ := splitRev(pos[0]); !seen.has(path) {
+		if path, _ := splitRev(pos[0]); !seen.has(seen.files, path) {
 			return toolError(fmt.Sprintf("%s is not a file the app has listed", tilde(path))), nil
+		}
+	}
+	if in.Args[0] == "vault" {
+		if msg := vaultGate(in.Args[1:], seen); msg != "" {
+			return toolError(msg), nil
 		}
 	}
 	out, err := runKennel(ctx, in.Args...)
 	if err != nil {
 		return toolError(err.Error()), nil
 	}
-	if in.Args[0] == "harness" && in.Args[1] == "show" {
+	if (in.Args[0] == "harness" && in.Args[1] == "show") || (in.Args[0] == "vault" && in.Args[1] == "ls") {
 		seen.add(out)
 	}
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: out}}}, nil
+}
+
+// vaultGate checks one vault command's words against what the app was shown,
+// returning why it is refused, or "".
+func vaultGate(args []string, seen *shown) string {
+	n := len(args)
+	if (args[0] == "rm" || args[0] == "copy" || args[0] == "install") && (n < 2 || !seen.hasItem(args[1])) {
+		return fmt.Sprintf("%s is not a vault item the app has listed", strings.Join(args[1:min(2, n)], ""))
+	}
+	switch args[0] {
+	case "ls":
+		if n == 1 || (n == 2 && args[1] == "--json") {
+			return ""
+		}
+	case "rm":
+		if n == 2 {
+			return ""
+		}
+	case "add", "unlink", "update":
+		if n == 2 {
+			if !seen.has(seen.skills, args[1]) {
+				return fmt.Sprintf("%s is not a skill the app has listed", tilde(args[1]))
+			}
+			return ""
+		}
+	case "copy":
+		if n == 3 {
+			// a new folder named directly inside a listed skills folder
+			dst := args[2]
+			if filepath.Clean(dst) != dst || !seen.has(seen.skillDirs, filepath.Dir(dst)) {
+				return fmt.Sprintf("%s is not in a skills folder the app has listed", tilde(dst))
+			}
+			if _, err := os.Lstat(dst); err == nil {
+				return fmt.Sprintf("%s already exists", tilde(dst))
+			}
+			return ""
+		}
+	case "install":
+		if n == 3 {
+			return ""
+		}
+		if n == 5 && args[3] == "--project" {
+			if !seen.has(seen.scopes, args[4]) {
+				return fmt.Sprintf("%s is not a project the app has opened", tilde(args[4]))
+			}
+			return ""
+		}
+	}
+	return fmt.Sprintf("kennel vault %s: the app does not run it with these arguments", strings.Join(args, " "))
 }
 
 // runKennel runs this kennel binary with args, so the app and the CLI share

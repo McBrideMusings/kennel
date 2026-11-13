@@ -129,7 +129,7 @@ func TestMCPToolsAndAppResource(t *testing.T) {
 	}
 }
 
-func TestMCPKennelToolRunsOnlyReadCommands(t *testing.T) {
+func TestMCPKennelToolRunsOnlyAppCommands(t *testing.T) {
 	h, proj := harnessSandbox(t)
 	cs := mcpSession(t)
 
@@ -229,5 +229,73 @@ func TestHarnessRecent(t *testing.T) {
 	}
 	if !eq(got, []string{"~/Work/poker", "~/Projects/kennel"}) {
 		t.Fatalf("recent = %q", got)
+	}
+}
+
+// The app's vault actions take only paths a harness show listed: a skill
+// folder for add and unlink, a skills folder for copy, an opened project for
+// install --project. Each one then does what its CLI command does.
+func TestMCPVaultActionsTakeOnlyListedPaths(t *testing.T) {
+	h, proj := harnessSandbox(t)
+	cs := mcpSession(t)
+	run := func(args ...string) *mcp.CallToolResult {
+		return callTool(t, cs, "kennel", map[string]any{"args": args})
+	}
+	admin := filepath.Join(h, ".claude", "skills", "admin")
+	if r := run("vault", "add", admin); !r.IsError || !strings.Contains(toolText(r), "not a skill the app has listed") {
+		t.Fatalf("vault add before a show = %v %q", r.IsError, toolText(r))
+	}
+	if !exists(filepath.Join(admin, "SKILL.md")) {
+		t.Fatal("a refused vault add moved the skill")
+	}
+	callTool(t, cs, "harness", map[string]any{})
+	if r := run("vault", "add", admin); r.IsError {
+		t.Fatalf("vault add of a listed skill: %s", toolText(r))
+	}
+	if got, _ := os.Readlink(admin); got != filepath.Join(h, ".local", "share", "kennel", "vault", "skills", "admin") {
+		t.Fatalf("after vault add the skill links to %q", got)
+	}
+	r := run("vault", "ls", "--json")
+	if r.IsError || !strings.Contains(toolText(r), `"item": "skills/admin"`) {
+		t.Fatalf("vault ls = %v %q", r.IsError, toolText(r))
+	}
+	vfile := filepath.Join(h, ".local", "share", "kennel", "vault", "skills", "admin", "SKILL.md")
+	if r := run("file", "show", vfile); r.IsError || toolText(r) != "global admin\n" {
+		t.Fatalf("file show of a vault ls file = %v %q", r.IsError, toolText(r))
+	}
+
+	if r := run("vault", "install", "skills/admin", "claude", "--project", proj); !r.IsError || !strings.Contains(toolText(r), "not a project the app has opened") {
+		t.Fatalf("install into an unopened project = %v %q", r.IsError, toolText(r))
+	}
+	callTool(t, cs, "harness", map[string]any{"directory": proj})
+	if r := run("vault", "install", "skills/admin", "claude", "--project", proj); r.IsError {
+		t.Fatalf("install into the opened project: %s", toolText(r))
+	}
+	if r := run("vault", "copy", "skills/admin", filepath.Join(h, "elsewhere", "admin")); !r.IsError || !strings.Contains(toolText(r), "not in a skills folder the app has listed") {
+		t.Fatalf("copy outside a listed skills folder = %v %q", r.IsError, toolText(r))
+	}
+	if r := run("vault", "rm", "skills/never-listed"); !r.IsError || !strings.Contains(toolText(r), "not a vault item the app has listed") {
+		t.Fatalf("rm of an unlisted item = %v %q", r.IsError, toolText(r))
+	}
+	if r := run("vault", "copy", "skills/admin", filepath.Join(proj, ".claude", "skills", "chat-mod")); !r.IsError || !strings.Contains(toolText(r), "already exists") {
+		t.Fatalf("copy onto an existing skill = %v %q", r.IsError, toolText(r))
+	}
+	for _, args := range [][]string{{"vault", "rm", "skills/admin", "extra"}, {"vault", "commit", "x"}, {"vault", "ls", "--json", "x"}} {
+		if r := run(args...); !r.IsError {
+			t.Fatalf("%v ran: %q", args, toolText(r))
+		}
+	}
+
+	// the global skill is listed again after the show re-read it
+	callTool(t, cs, "harness", map[string]any{})
+	if r := run("vault", "unlink", admin); r.IsError {
+		t.Fatalf("vault unlink of a listed skill: %s", toolText(r))
+	}
+	if fi, _ := os.Lstat(admin); fi == nil || fi.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("vault unlink left the link")
+	}
+	b, _ := os.ReadFile(filepath.Join(h, ".cfg", "config.toml"))
+	if !strings.Contains(string(b), `"~/.claude/skills/admin" = "vault:skills/admin@`) {
+		t.Fatalf("config after unlink:\n%s", b)
 	}
 }

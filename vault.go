@@ -18,6 +18,8 @@ const vaultUsage = `usage:
   kennel vault rm <item>                                remove an item no link points at
   kennel vault copy <item> <path>                       copy an item into a project and record it in config.toml
   kennel vault update <path>                            bring a recorded copy to the item's last commit
+  kennel vault unlink <path>                            replace a link to a vault item with a recorded copy
+  kennel vault ls [--json]                              the vault's skills and snippets, and each recorded copy
   kennel vault commit --session <id> --harness <h> <file>   commit one vault file an agent edited
   kennel vault log <item>                               the item's commits
   kennel vault show <item>[@<rev>]                      the item's files at a commit`
@@ -201,6 +203,13 @@ func cmdVault(args []string) int {
 			return failf("usage: kennel vault update <path>")
 		}
 		return vaultUpdate(v, args[0])
+	case "unlink":
+		if len(args) != 1 {
+			return failf("usage: kennel vault unlink <path>")
+		}
+		return vaultUnlink(v, args[0])
+	case "ls":
+		return vaultLs(v, args)
 	case "log":
 		if len(args) != 1 {
 			return failf("usage: kennel vault log <item>")

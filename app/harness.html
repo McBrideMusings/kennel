@@ -83,6 +83,16 @@ button:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--acc);outli
 .gv .f.wrap .nm{white-space:normal;overflow-wrap:anywhere}
 .gv .hist{overflow-x:hidden}.gv .c{overflow-wrap:anywhere}
 .dec{font:600 11px var(--sans);padding:1px 7px;border-radius:4px;background:var(--tint);color:var(--soft)}
+.gv .mid{display:flex;flex-direction:column;min-width:0;min-height:0}
+.gv .mid .doc{flex:1}
+.acts{display:flex;justify-content:flex-end;gap:6px;padding:10px 20px 0;min-height:27px;flex:none}
+.gv .gh{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.gv .gh button{padding:2px 9px}
+button.pri{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+button:disabled{opacity:.45;cursor:default}
+.ask{background:var(--tint);border-radius:6px;padding:10px 12px;font-size:12.5px}
+.ask p{margin:0 0 8px;overflow-wrap:anywhere}.ask code{font:12px var(--mono)}
+.ask .row{display:flex;gap:6px}
 .dec.allow{background:var(--ok-t);color:var(--ok)}.dec.ask{background:var(--warn-t);color:var(--warn)}.dec.deny{background:var(--bad-t);color:var(--bad)}
 </style>
 </head>
@@ -104,10 +114,10 @@ button:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--acc);outli
     </span>
   </div>
   <div class="body">
-    <nav class="side nav" aria-label="Sections"><h3>Harness</h3><a href="#" data-sec="skills"><span>Skills</span><span class="n" id="n-skills"></span></a><a href="#" data-sec="guidance"><span>Guidance</span><span class="n" id="n-guidance"></span></a><a href="#" data-sec="permissions"><span>Permissions</span><span class="n" id="n-permissions"></span></a><a href="#" data-sec="hooks"><span>Hooks</span><span class="n" id="n-hooks"></span></a><a href="#" data-sec="mcp"><span>MCP servers</span><span class="n" id="n-mcp"></span></a></nav>
+    <nav class="side nav" aria-label="Sections"><h3>Harness</h3><a href="#" data-sec="skills"><span>Skills</span><span class="n" id="n-skills"></span></a><a href="#" data-sec="guidance"><span>Guidance</span><span class="n" id="n-guidance"></span></a><a href="#" data-sec="permissions"><span>Permissions</span><span class="n" id="n-permissions"></span></a><a href="#" data-sec="hooks"><span>Hooks</span><span class="n" id="n-hooks"></span></a><a href="#" data-sec="mcp"><span>MCP servers</span><span class="n" id="n-mcp"></span></a><h3>Vault</h3><a href="#" data-sec="vskills"><span>Skills</span><span class="n" id="n-vskills"></span></a><a href="#" data-sec="vsnippets"><span>Snippets</span><span class="n" id="n-vsnippets"></span></a></nav>
     <main class="main"><div class="gv">
       <div class="files" id="tree" role="tree" aria-label="Skills"></div>
-      <div class="doc" id="doc"></div>
+      <div class="mid"><div class="acts" id="acts"></div><div class="doc" id="doc"></div></div>
       <div class="hist" id="hist"></div>
     </div></main>
   </div>
@@ -161,13 +171,17 @@ async function kennel(...args) {
 const kennelJSON = async (...args) => JSON.parse(await kennel(...args, "--json"));
 
 // ---- state ----
-const SECTIONS = {skills: "Skills", guidance: "Guidance", permissions: "Permissions", hooks: "Hooks", mcp: "MCP servers"};
+const SECTIONS = {skills: "Skills", guidance: "Guidance", permissions: "Permissions", hooks: "Hooks", mcp: "MCP servers", vskills: "Vault skills", vsnippets: "Snippets"};
+const HARNESS = ["skills", "guidance", "permissions", "hooks", "mcp"];
+const isVault = sec => sec === "vskills" || sec === "vsnippets";
+const pageShow = () => isVault(S.section) ? S.vault : S.shows[S.section];
 const S = {
   scope: "global",   // "global" or a directory
   harness: "claude",
   project: null,     // the directory the project segment names
   section: "skills",
   shows: {},         // harness show <section> per section, or {error}
+  vault: {},         // vault ls, or {error}
   open: new Set(),   // open folders and groups, by key
   items: new Map(),  // tree key -> {file, find}: the file a row opens, and the line to mark in it
   sel: null,         // selected tree key
@@ -190,17 +204,20 @@ function onToolResult(r) {
 // A load reads every section, so the counts are whole and every file a page
 // opens has been listed by a harness show first.
 let loadSeq = 0, fileSeq = 0;
-async function load() {
+// keep reopens the page on the row it names, or the selected one.
+async function load(keep) {
   const seq = ++loadSeq;
   renderTop();
-  const names = Object.keys(SECTIONS);
-  const got = await Promise.allSettled(names.map(s => kennelJSON("harness", "show", s, "--scope", S.scope, "--harness", S.harness)));
+  const [got, vault] = await Promise.all([
+    Promise.allSettled(HARNESS.map(s => kennelJSON("harness", "show", s, "--scope", S.scope, "--harness", S.harness))),
+    kennelJSON("vault", "ls").catch(e => ({error: e.message})),
+  ]);
   if (seq !== loadSeq) return;
-  S.shows = {};
-  got.forEach((g, i) => S.shows[names[i]] = g.status === "fulfilled" ? g.value : {error: g.reason.message});
+  S.shows = {}; S.vault = vault;
+  got.forEach((g, i) => S.shows[HARNESS[i]] = g.status === "fulfilled" ? g.value : {error: g.reason.message});
   const ok = got.find(g => g.status === "fulfilled");
   if (ok) setScope(ok.value);
-  renderTop(); renderCounts(); openPage();
+  renderTop(); renderCounts(); openPage(keep);
 }
 function setScope(show) {
   S.harness = show.harness;
@@ -222,10 +239,12 @@ function renderTop() {
   });
 }
 function renderCounts() {
-  for (const s of Object.keys(SECTIONS)) {
+  for (const s of HARNESS) {
     const show = S.shows[s];
     $("n-" + s).textContent = show && show.blocks ? show.blocks.map(b => b.entries.length).join(" + ") : "";
   }
+  $("n-vskills").textContent = S.vault.skills ? S.vault.skills.length : "";
+  $("n-vsnippets").textContent = S.vault.snippets ? S.vault.snippets.length : "";
 }
 
 $("global").onclick = () => { S.scope = "global"; load(); };
@@ -260,8 +279,10 @@ $("choose").onclick = () => { $("filter").value = "~/"; renderRecent(); $("filte
 document.addEventListener("mousedown", e => { if (!e.target.closest(".pick")) $("dd").hidden = true; });
 
 // ---- page ----
-// openPage shows the current section: its tree, then its first row's file.
-function openPage() {
+// openPage shows the current section: its tree, then its first row's file,
+// or with keep (a row key, or true for the selected row) that row's.
+function openPage(keep) {
+  const want = keep === true ? S.sel : keep, wasOpen = S.open;
   document.querySelectorAll("[data-sec]").forEach(a => {
     a.className = a.dataset.sec === S.section ? "on" : "";
     a.toggleAttribute("aria-current", a.dataset.sec === S.section);
@@ -269,12 +290,14 @@ function openPage() {
   $("tree").setAttribute("aria-label", SECTIONS[S.section]);
   fileSeq++;
   S.sel = S.file = S.find = S.rev = null; S.commits = [];
-  $("doc").innerHTML = ""; renderHist();
-  const show = S.shows[S.section];
+  $("doc").innerHTML = ""; renderHist(); renderActs();
+  const show = pageShow();
   if (!show) { $("tree").innerHTML = ""; return; }
   if (show.error) { $("tree").innerHTML = ""; showError(show.error); return; }
   S.open = defaultOpen(show);
+  if (want) { for (const k of wasOpen) S.open.add(k); for (let d = want; d.includes("/"); d = d.slice(0, d.lastIndexOf("/"))) S.open.add(d); }
   renderTree();
+  if (want && S.items.has(want)) return select(want);
   const first = $("tree").querySelector("[data-key]");
   if (first) select(first.dataset.key);
 }
@@ -286,6 +309,7 @@ function defaultOpen(show) {
     const b = show.blocks.find(b => b.entries.length);
     if (b) open.add(b.entries[0].path);
   }
+  if (S.section === "vskills" && show.skills.length) open.add(show.skills[0].path);
   if (S.section === "hooks" || S.section === "permissions") {
     for (const b of show.blocks) if (b.scope === show.scope.kind)
       for (const g of groups(b)) open.add(b.scope + ":" + g.name);
@@ -344,7 +368,7 @@ function markLine(lines, find) {
 }
 
 function renderTree() {
-  const show = S.shows[S.section], out = [];
+  const show = pageShow(), out = [];
   S.items = new Map();
   const row = (cls, depth, tw, name, attrs, after = "") =>
     out.push(`<button class="f ${cls}" style="padding-left:${8 + depth * 14}px" ${attrs}><span class="tw">${tw}</span><span class="nm">${name}</span>${after}</button>`);
@@ -359,12 +383,13 @@ function renderTree() {
   };
 
   // a skill's files: SKILL.md first, then folders, then files
-  const walkSkill = (node, path, depth) => {
+  // skill is the harness show entry or the vault ls item the files belong to
+  const walkSkill = (node, path, depth, skill) => {
     const files = node.files.slice().sort((a, b) => (a === "SKILL.md" ? -1 : b === "SKILL.md" ? 1 : a.localeCompare(b)));
-    const file = f => leaf(path + "/" + f, depth, esc(f), {file: path + "/" + f});
+    const file = f => leaf(path + "/" + f, depth, esc(f), {file: path + "/" + f, skill});
     if (files[0] === "SKILL.md") file(files.shift());
     for (const d of Object.keys(node.dirs).sort())
-      if (folder(path + "/" + d, depth, esc(d))) walkSkill(node.dirs[d], path + "/" + d, depth + 1);
+      if (folder(path + "/" + d, depth, esc(d))) walkSkill(node.dirs[d], path + "/" + d, depth + 1, skill);
     files.forEach(file);
   };
   // guidance: files first, the harness's own file leading, then folders with
@@ -380,11 +405,18 @@ function renderTree() {
     }
   };
 
-  for (const b of show.blocks) {
-    out.push(`<div class="grp"><span class="tag ${b.scope === "project" ? "p" : "g"}">${b.scope === "project" ? "Project" : "Global"}</span></div>`);
+  if (S.section === "vskills") {
+    out.push(`<div class="grp gh"><span></span><button data-act="save">Save a skill…</button></div>`);
+    for (const it of show.skills) if (folder(it.path, 0, esc(it.name))) walkSkill(nest(it.files), it.path, 1, it);
+  }
+  if (S.section === "vsnippets") for (const it of show.snippets) leaf(it.path, 0, esc(it.name), {file: it.path, skill: it});
+  for (const b of show.blocks || []) {
+    // Add… sits on the block a vault install writes to
+    const add = S.section === "skills" && b.scope === show.scope.kind ? `<button data-act="vault">Add…</button>` : "";
+    out.push(`<div class="grp${add ? " gh" : ""}"><span class="tag ${b.scope === "project" ? "p" : "g"}">${b.scope === "project" ? "Project" : "Global"}</span>${add}</div>`);
     if (S.section === "skills") for (const s of b.entries) {
       const name = s.vault ? `<span class="vlt">${esc(s.name)}${VAULT_ICON}</span>` : esc(s.name);
-      if (folder(s.path, 0, name)) walkSkill(nest(s.files), s.path, 1);
+      if (folder(s.path, 0, name)) walkSkill(nest(s.files), s.path, 1, s);
     }
     if (S.section === "guidance") walkGuidance(nest(b.entries.map(e => e.rel)), b.path, 0);
     if (S.section === "hooks") for (const g of groups(b)) {
@@ -406,6 +438,9 @@ function renderTree() {
   $("tree").innerHTML = out.join("");
 }
 $("tree").onclick = e => {
+  const a = e.target.closest("[data-act]");
+  if (a && a.dataset.act === "vault") { S.section = "vskills"; openPage(); return; }
+  if (a && a.dataset.act === "save") { pickSave(); return; }
   const b = e.target.closest(".f"); if (!b) return;
   if (b.dataset.dir) { const d = b.dataset.dir; S.open.has(d) ? S.open.delete(d) : S.open.add(d); renderTree(); }
   else select(b.dataset.key);
@@ -413,7 +448,75 @@ $("tree").onclick = e => {
 function select(key) {
   const it = S.items.get(key); if (!it) return;
   S.sel = key; S.find = it.find || null;
+  renderActs();
   selectFile(it.file);
+}
+
+// ---- vault actions ----
+// Each button runs one kennel vault command, then reloads every section.
+// The ones that move something to the Trash ask first, in the reader.
+const scopeBlock = () => { const sk = S.shows.skills; return sk && sk.blocks ? sk.blocks.find(b => b.scope === sk.scope.kind) : null; };
+function renderActs() {
+  const it = S.items.get(S.sel), sk = it && it.skill, out = [];
+  const btn = (label, act, opts = {}) => out.push(`<button data-a="${act}"${opts.off ? " disabled" : ""}${opts.hide ? ' style="visibility:hidden"' : ""}>${label}</button>`);
+  if (S.section === "skills" && sk) {
+    if (sk.vault) btn("Unlink and copy", "unlink");
+    const copy = (S.vault.copies || []).find(c => c.path === sk.path);
+    if (copy && copy.behind) btn("Update", "update");
+  }
+  if (S.section === "vskills" && sk) {
+    const block = scopeBlock(), has = !!(block && block.entries.some(e => e.name === sk.name));
+    btn("Add", "install", {off: has || !block});
+    btn("Copy", "copy", {off: has || !block, hide: S.scope === "global"});
+    btn("Remove", "rm");
+  }
+  if (S.section === "vsnippets" && sk) btn("Remove", "rm");
+  $("acts").innerHTML = out.join("");
+}
+$("acts").onclick = e => {
+  const b = e.target.closest("[data-a]"); if (!b || b.disabled) return;
+  const sk = S.items.get(S.sel).skill, block = scopeBlock();
+  switch (b.dataset.a) {
+    case "unlink": return run(["vault", "unlink", sk.path]);
+    case "update": return run(["vault", "update", sk.path]);
+    case "install": return run(["vault", "install", sk.item, S.harness, ...(S.scope === "global" ? [] : ["--project", S.scope])]);
+    case "copy": return run(["vault", "copy", sk.item, block.dirs[0] + "/" + sk.name]);
+    case "rm": return ask(`<code>${esc(sk.item)}</code> goes to the Trash.`, "Remove", ["vault", "rm", sk.item]);
+  }
+};
+// ask puts a question in the reader with one button that runs args.
+function ask(html, label, args, keep) {
+  fileSeq++;
+  $("doc").innerHTML = `<div class="ask"><p>${html}</p><div class="row"><button class="pri" data-q="yes">${esc(label)}</button><button data-q="no">Cancel</button></div></div>`;
+  $("doc").querySelector('[data-q="yes"]').onclick = () => run(args, keep);
+  $("doc").querySelector('[data-q="no"]').onclick = () => S.sel ? select(S.sel) : ($("doc").innerHTML = "");
+}
+// run reloads after a failure too: a command can change something before
+// it fails. The error replaces the reopened file unless a newer load began.
+async function run(args, keep = true) {
+  document.querySelectorAll("#acts button, [data-q]").forEach(b => b.disabled = true);
+  let err = null;
+  try { await kennel(...args); } catch (e) { err = e; }
+  const reload = load(err ? true : keep), mine = loadSeq;
+  await reload;
+  if (err && mine === loadSeq) { fileSeq++; showError(err.message); }
+}
+// pickSave lists the scope's skills that are not links yet; picking one asks
+// before vault add moves it.
+function pickSave() {
+  fileSeq++;
+  S.sel = null; renderTree(); renderActs(); S.commits = []; renderHist();
+  const sk = S.shows.skills, rows = [];
+  for (const b of (sk && sk.blocks) || []) {
+    const free = b.entries.filter(e => !e.link);
+    if (!free.length) continue;
+    rows.push(`<div class="grp"><span class="tag ${b.scope === "project" ? "p" : "g"}">${b.scope === "project" ? "Project" : "Global"}</span></div>`);
+    for (const e of free) rows.push(`<button class="f" data-path="${esc(e.path)}" data-name="${esc(e.name)}"><span class="tw"></span><span class="nm">${esc(e.name)}</span></button>`);
+  }
+  $("doc").innerHTML = rows.length ? `<div class="pickl">${rows.join("")}</div>` : `<div class="err">No skills to save</div>`;
+  $("doc").querySelectorAll("[data-path]").forEach(b => b.onclick = () =>
+    ask(`<code>${esc(b.dataset.path)}</code> goes to the Trash; a link to the vault copy takes its place.`, "Save",
+      ["vault", "add", b.dataset.path], S.vault.dir + "/skills/" + b.dataset.name + "/SKILL.md"));
 }
 
 // ---- reader and commits ----
