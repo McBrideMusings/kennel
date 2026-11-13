@@ -7,9 +7,13 @@ Go CLI that routes directories to coding-agent profiles; see README.md for the m
   profile symlinks and share links, `record.go` keeps the links record of share links kennel
   made, `shareedit.go` holds `share add` and `share rm`, which
   rewrite config.toml through `tomledit.go`'s editor of one share array, `hooks.go` generates Codex and pi hook files from Claude's hook list,
-  `hookrun.go` is the `kennel hook` wrapper, `main.go` holds the commands and the zsh hook.
+  `hookrun.go` is the `kennel hook` wrapper, `vault.go` holds the vault store and `kennel vault`,
+  `main.go` holds the commands and the zsh hook.
 - `kennel env` runs on every `cd` in every shell. Keep it to one config read, one routes
   read and one `git rev-parse`.
-- `link` never moves or deletes anything; it reports and exits 1.
+- `link` never moves or deletes anything; it reports and exits 1. `vault add` is the one
+  exception: it moves the original to the Trash and links the vault copy in its place.
+- The vault's git calls always pass `--git-dir` and `--work-tree`; the vault has no `.git`
+  and no remote.
 - Tests run against a throwaway `HOME` and `KENNEL_CONFIG_DIR`, never the real config.
 - Verify with the `project-verify` skill; `admin test` is the build check.
