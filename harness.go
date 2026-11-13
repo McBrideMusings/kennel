@@ -284,26 +284,53 @@ func (sc *harnessScope) skills(scope string) ([]skillEntry, error) {
 }
 
 // listFiles lists every file under root, relative to it, skipping .git and
-// node_modules; root itself may be a link.
+// node_modules; root and any folder inside it may be a link.
 func listFiles(root string) ([]string, error) {
-	real, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return nil, err
-	}
 	files := []string{}
-	err = filepath.WalkDir(real, func(p string, d fs.DirEntry, err error) error {
+	err := walkFiles(root, func(rel string) { files = append(files, rel) })
+	return files, err
+}
+
+// walkFiles calls fn with the path, relative to root, of every regular file
+// under root, following links to folders (root included) and skipping .git and
+// node_modules. A link back to a folder it is already inside is not followed,
+// and a broken link is skipped.
+func walkFiles(root string, fn func(rel string)) error {
+	inside := map[string]bool{}
+	var walk func(dir, rel string) error
+	walk = func(dir, rel string) error {
+		real, err := filepath.EvalSymlinks(dir)
 		if err != nil {
 			return err
 		}
-		if d.IsDir() && p != real && (d.Name() == ".git" || d.Name() == "node_modules") {
-			return filepath.SkipDir
+		if inside[real] {
+			return nil
 		}
-		if !d.IsDir() {
-			files = append(files, p[len(real)+1:])
+		inside[real] = true
+		defer delete(inside, real)
+		ents, err := os.ReadDir(real)
+		if err != nil {
+			return err
+		}
+		for _, e := range ents {
+			p, r := filepath.Join(real, e.Name()), filepath.Join(rel, e.Name())
+			fi, err := os.Stat(p)
+			switch {
+			case err != nil:
+			case fi.IsDir():
+				if e.Name() == ".git" || e.Name() == "node_modules" {
+					continue
+				}
+				if err := walk(p, r); err != nil {
+					return err
+				}
+			case fi.Mode().IsRegular():
+				fn(r)
+			}
 		}
 		return nil
-	})
-	return files, err
+	}
+	return walk(root, "")
 }
 
 // ---- guidance ----
@@ -339,11 +366,10 @@ func (sc *harnessScope) guidance(scope string) ([]guidanceEntry, error) {
 		}
 	}
 	if sc.harness == "claude" {
-		filepath.WalkDir(filepath.Join(base, rulesDir), func(p string, d fs.DirEntry, err error) error {
-			if err == nil && !d.IsDir() && strings.HasSuffix(p, ".md") {
-				found[p[len(base)+1:]] = true
+		walkFiles(filepath.Join(base, rulesDir), func(rel string) {
+			if strings.HasSuffix(rel, ".md") {
+				found[filepath.Join(rulesDir, rel)] = true
 			}
-			return nil
 		})
 	}
 	rels := make([]string, 0, len(found))

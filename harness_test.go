@@ -313,3 +313,53 @@ func TestFileLogThroughVaultLink(t *testing.T) {
 		t.Fatalf("file show through the vault link = %d %q", code, out)
 	}
 }
+
+func TestHarnessShowFollowsLinkedFolders(t *testing.T) {
+	h, proj := harnessSandbox(t)
+	mk := func(p, body string) {
+		os.MkdirAll(filepath.Dir(p), 0o755)
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := func(target, at string) {
+		if err := os.Symlink(target, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A share link in place of the project's rules folder.
+	shared := filepath.Join(h, "shared-rules")
+	mk(filepath.Join(shared, "go.md"), "rule\n")
+	mk(filepath.Join(shared, "web", "css.md"), "rule\n")
+	os.RemoveAll(filepath.Join(proj, ".claude", "rules"))
+	link(shared, filepath.Join(proj, ".claude", "rules"))
+	n := showJSON(t, "guidance", "--scope", proj).names("rel")
+	want := []string{".claude/rules/go.md", ".claude/rules/web/css.md", "CLAUDE.local.md", "CLAUDE.md", "apps/web/CLAUDE.md"}
+	if !eq(n[0], want) {
+		t.Fatalf("guidance through a linked rules folder = %q", n[0])
+	}
+	// The same link as the Claude home's rules folder.
+	link(shared, filepath.Join(h, ".claude-work", "rules"))
+	n = showJSON(t, "guidance", "--scope", proj).names("rel")
+	if want := []string{"CLAUDE.md", "rules/go.md", "rules/web/css.md"}; !eq(n[1], want) {
+		t.Fatalf("home guidance through a linked rules folder = %q", n[1])
+	}
+
+	// A linked folder inside a skill, a link back up to the skill itself, a
+	// broken link (skipped: nothing behind it to read) and node_modules inside
+	// the linked folder (skipped).
+	skill := filepath.Join(h, ".claude-work", "skills", "diagnose")
+	refs := filepath.Join(h, "refs")
+	mk(filepath.Join(refs, "b.md"), "ref\n")
+	link(refs, filepath.Join(skill, "more"))
+	link(skill, filepath.Join(skill, "loop"))
+	link(filepath.Join(h, "gone"), filepath.Join(skill, "dead.md"))
+	mk(filepath.Join(refs, "node_modules", "x", "y.md"), "never listed\n")
+	files, err := listFiles(skill)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"SKILL.md", "more/b.md", "refs/a.md"}; !eq(files, want) {
+		t.Fatalf("skill files = %q, want %q", files, want)
+	}
+}
