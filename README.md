@@ -189,6 +189,10 @@ the folder holds no `.git`. The repository has no remote.
 | Command | Does |
 | --- | --- |
 | `kennel vault add <path>` | copies a skill folder or snippet `.md` into the vault, commits it, moves the original to `~/.Trash` and puts a link to the vault copy where it was |
+| `kennel vault install <item> <claude\|codex\|pi> [--project <dir>]` | links a vault skill into that harness's global skills folder, or the one at the project's git root (`.claude/skills`, `.agents/skills`, `.pi/skills`) |
+| `kennel vault rm <item>` | moves the item to `~/.Trash` and commits its removal; refuses while a link points at it, listing each link |
+| `kennel vault copy <item> <path>` | writes the item's files to `<path>` (inside it when it is a folder) and records `"<path>" = "vault:<item>@<sha>"` in config.toml's `[copied]` table, changing no other line |
+| `kennel vault update <path>` | rewrites a recorded copy to the item's last commit and its `[copied]` sha; refuses a copy whose files differ from the commit it records |
 | `kennel vault log <item>` | the item's commits: short sha, time, message |
 | `kennel vault show <item>[@<rev>]` | the item at a commit: a file's text, or each file of a skill under a `==> path <==` header |
 | `kennel vault commit --session <id> --harness <h> <file>` | commits one file an agent edited, naming the harness and session |
@@ -197,6 +201,11 @@ An item is a path inside the vault (`skills/recomp`, `skills/recomp/SKILL.md`) o
 name (`recomp`). Every vault command first commits any change made outside kennel as one
 `sweep` commit. `vault add` is the one kennel command that moves a file of yours; it
 refuses a link, a name the vault already holds and a folder that is its own git repository.
+`install` never replaces what is already at the link's path. `rm` finds links in each
+harness's skills folders in the base and profile homes, and every link `add` and `install`
+made, recorded in `~/.local/state/kennel/vault-links`. A copy is plain files a project
+commits; `update` replaces them only when they match the recorded commit, so it never
+loses an edit.
 
 ## Reading what a harness gets
 

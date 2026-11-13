@@ -31,6 +31,11 @@ const usage = `kennel — route directories to coding-agent profiles
   kennel hook codex|pi -- <command>        run one Claude hook on that tool's payload
   kennel doctor                            check config, symlinks and this shell's variables
   kennel vault add <path>                  move a skill folder or snippet into the vault, link it back
+  kennel vault install <item> <claude|codex|pi> [--project <dir>]
+                                           link a vault skill into a harness's global or project skills
+  kennel vault rm <item>                   remove a vault item no link points at
+  kennel vault copy <item> <path>          copy a vault item into a project, recorded in [copied]
+  kennel vault update <path>               bring a recorded copy to the item's last commit
   kennel vault log <item>                  a vault skill or snippet's commits
   kennel vault show <item>[@<rev>]         a vault item's files at a commit
   kennel vault commit --session <id> --harness <h> <file>
@@ -74,6 +79,9 @@ const configHelp = `Config: ~/.config/kennel/config.toml (KENNEL_CONFIG_DIR move
   into   = "~/.agents/skills"
   items  = ["diagnose", "research"]   # or "*": every entry in source
   # exclude = ["grill-me"]      # with items = "*": entries not to link
+
+  [copied]                      # written by kennel vault copy and update
+  "~/Projects/app/.claude/skills/recomp" = "vault:skills/recomp@3f2a9c1d0e4b7a6f5e8d9c0b1a2f3e4d5c6b7a8f"
 
   [hooks]                       # optional: run Claude's tagged hooks elsewhere
   codex = true                  # rewrite ~/.codex/hooks.json entries into ~/.claude/hooks

@@ -223,3 +223,116 @@ func (a *tomlArray) removed(i int) []byte {
 }
 
 func stripCommentBytes(b []byte) []byte { return []byte(stripComment(string(b))) }
+
+// setCopied returns src with the [copied] entry for path set to value: an
+// existing entry's value replaced in its line, key and comment kept; else a
+// new line after the table's last entry; else a new [copied] table at the end
+// of the file. Every other line stays as it was.
+func setCopied(src []byte, path, value string) ([]byte, error) {
+	q := strconv.Quote(value)
+	nl := "\n"
+	if bytes.Contains(src, []byte("\r\n")) {
+		nl = "\r\n"
+	}
+	lines := bytes.SplitAfter(src, []byte("\n"))
+	off, in, root, at := 0, false, true, -1
+	for _, l := range lines {
+		start := off
+		off += len(l)
+		raw := strings.TrimSuffix(strings.TrimSuffix(string(l), "\n"), "\r")
+		t := strings.TrimSpace(stripComment(raw))
+		if strings.HasPrefix(t, "[") {
+			root = false
+			if in {
+				break
+			}
+			h := strings.Join(strings.Fields(t), "")
+			if strings.HasPrefix(h, "[copied.") || strings.HasPrefix(h, "[[copied") {
+				return nil, fmt.Errorf("%s: kennel edits copied only as a [copied] table of \"path\" = \"vault:...\" lines; edit it by hand", t)
+			}
+			if in = h == "[copied]"; in {
+				at = off
+			}
+			continue
+		}
+		if rest, ok := strings.CutPrefix(t, "copied"); root && ok && (rest == "" || strings.ContainsAny(rest[:1], " \t.=")) {
+			return nil, fmt.Errorf("%s: kennel edits copied only as a [copied] table of \"path\" = \"vault:...\" lines; edit it by hand", t)
+		}
+		if !in || t == "" {
+			continue
+		}
+		key, n, ok := tomlKey(t)
+		if !ok {
+			return nil, fmt.Errorf("[copied] holds a line kennel cannot read (%s); edit it by hand", t)
+		}
+		at = off
+		if expand(key) != expand(path) {
+			continue
+		}
+		lead := len(raw) - len(strings.TrimLeft(raw, " \t"))
+		line := raw[:lead+n] + " " + q
+		if c := strings.TrimSpace(raw[len(stripComment(raw)):]); c != "" {
+			line += " " + c
+		}
+		return append(append(append([]byte{}, src[:start]...), line+string(l[len(raw):])...), src[off:]...), nil
+	}
+	entry := strconv.Quote(path) + " = " + q + nl
+	if at < 0 {
+		out := append([]byte{}, src...)
+		if len(out) > 0 && !bytes.HasSuffix(out, []byte("\n")) {
+			out = append(out, nl...)
+		}
+		if len(out) > 0 {
+			out = append(out, nl...)
+		}
+		return append(out, "[copied]"+nl+entry...), nil
+	}
+	if at > 0 && src[at-1] != '\n' {
+		entry = nl + strings.TrimSuffix(entry, nl)
+	}
+	out := append([]byte{}, src[:at]...)
+	out = append(out, entry...)
+	return append(out, src[at:]...), nil
+}
+
+// tomlKey reads the key at the start of a key/value line: a basic or literal
+// quoted string, or a bare key. n is the length up to and including the =.
+func tomlKey(t string) (key string, n int, ok bool) {
+	switch {
+	case strings.HasPrefix(t, `"`):
+		j := 1
+		for j < len(t) && t[j] != '"' {
+			if t[j] == '\\' {
+				j++
+			}
+			j++
+		}
+		if j >= len(t) {
+			return "", 0, false
+		}
+		k, err := strconv.Unquote(t[:j+1])
+		if err != nil {
+			return "", 0, false
+		}
+		key, n = k, j+1
+	case strings.HasPrefix(t, "'"):
+		j := strings.IndexByte(t[1:], '\'')
+		if j < 0 {
+			return "", 0, false
+		}
+		key, n = t[1:j+1], j+2
+	default:
+		n = strings.IndexFunc(t, func(r rune) bool {
+			return !(r == '_' || r == '-' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9')
+		})
+		if n <= 0 {
+			return "", 0, false
+		}
+		key = t[:n]
+	}
+	rest := strings.TrimLeft(t[n:], " \t")
+	if !strings.HasPrefix(rest, "=") {
+		return "", 0, false
+	}
+	return key, len(t) - len(rest) + 1, true
+}

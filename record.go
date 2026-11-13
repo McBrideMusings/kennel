@@ -21,9 +21,12 @@ func recordPath() string { return filepath.Join(home(), ".local", "state", "kenn
 // readRecord returns the recorded links, path to target. A missing file is an
 // empty record with os.ErrNotExist; a line that is not two absolute paths is
 // skipped.
-func readRecord() (map[string]string, error) {
+func readRecord() (map[string]string, error) { return readRecordAt(recordPath()) }
+
+// readRecordAt reads a record at path: the links record or the vault's.
+func readRecordAt(path string) (map[string]string, error) {
 	rec := map[string]string{}
-	b, err := os.ReadFile(recordPath())
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return rec, err
 	}
@@ -37,20 +40,24 @@ func readRecord() (map[string]string, error) {
 	return rec, sc.Err()
 }
 
-func writeRecord(rec map[string]string) error {
+func writeRecord(rec map[string]string) error { return writeRecordAt(recordPath(), rec) }
+
+func writeRecordAt(path string, rec map[string]string) error {
 	var b strings.Builder
 	for _, p := range slices.Sorted(maps.Keys(rec)) {
 		fmt.Fprintf(&b, "%s\t%s\n", p, rec[p])
 	}
-	return writeAtomic(recordPath(), []byte(b.String()))
+	return writeAtomic(path, []byte(b.String()))
 }
 
 // updateRecord reads the record, lets edit change it, and writes it back when
 // edit reports a change. A record that exists but cannot be read is left as
 // it is, so one bad read never wipes it. A failure is a warning: the links
 // themselves are already made or removed.
-func updateRecord(edit func(rec map[string]string) bool) {
-	rec, err := readRecord()
+func updateRecord(edit func(rec map[string]string) bool) { updateRecordAt(recordPath(), edit) }
+
+func updateRecordAt(path string, edit func(rec map[string]string) bool) {
+	rec, err := readRecordAt(path)
 	if err != nil && !os.IsNotExist(err) {
 		fmt.Fprintf(os.Stderr, "kennel: links not recorded: %v\n", err)
 		return
@@ -58,7 +65,7 @@ func updateRecord(edit func(rec map[string]string) bool) {
 	if !edit(rec) {
 		return
 	}
-	if err := writeRecord(rec); err != nil {
+	if err := writeRecordAt(path, rec); err != nil {
 		fmt.Fprintf(os.Stderr, "kennel: links not recorded: %v\n", err)
 	}
 }

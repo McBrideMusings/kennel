@@ -14,6 +14,10 @@ import (
 
 const vaultUsage = `usage:
   kennel vault add <path>                               move a skill folder or snippet .md into the vault and link it back
+  kennel vault install <item> <claude|codex|pi> [--project <dir>]   link a vault skill into a harness's skills
+  kennel vault rm <item>                                remove an item no link points at
+  kennel vault copy <item> <path>                       copy an item into a project and record it in config.toml
+  kennel vault update <path>                            bring a recorded copy to the item's last commit
   kennel vault commit --session <id> --harness <h> <file>   commit one vault file an agent edited
   kennel vault log <item>                               the item's commits
   kennel vault show <item>[@<rev>]                      the item's files at a commit`
@@ -183,6 +187,20 @@ func cmdVault(args []string) int {
 			return failf("usage: kennel vault add <path>")
 		}
 		return vaultAdd(v, args[0])
+	case "install":
+		return vaultInstall(v, args)
+	case "rm":
+		if len(args) != 1 {
+			return failf("usage: kennel vault rm <item>")
+		}
+		return vaultRm(v, args[0])
+	case "copy":
+		return vaultCopy(v, args)
+	case "update":
+		if len(args) != 1 {
+			return failf("usage: kennel vault update <path>")
+		}
+		return vaultUpdate(v, args[0])
 	case "log":
 		if len(args) != 1 {
 			return failf("usage: kennel vault log <item>")
@@ -273,6 +291,7 @@ func vaultAdd(v *vault, arg string) int {
 	if err := os.Symlink(dst, src); err != nil {
 		return failf("the vault holds %s and the original is at %s, but linking %s failed: %v", rel, tilde(trashed), tilde(src), err)
 	}
+	recordVaultLink(src, dst)
 	logf("vault add: linked %s -> %s", src, dst)
 	fmt.Printf("Added %s\n  %s → %s\n  Original: %s\n", rel, tilde(src), tilde(dst), tilde(trashed))
 	return 0

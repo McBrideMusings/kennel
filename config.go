@@ -88,6 +88,31 @@ type Config struct {
 	Tools    map[string]*Tool
 	Profiles map[string]map[string]string   // profile → tool → home
 	Shared   map[string]map[string][]string // profile → tool → its own shared list, when it has one
+	Copied   map[string]copyOrigin          // a copy's absolute path → the vault item and commit it came from
+}
+
+// copyOrigin is a [copied] value, "vault:<item>@<sha>": the vault item a copy
+// came from and the commit it matches.
+type copyOrigin struct {
+	Item string
+	Rev  string
+}
+
+func (o copyOrigin) String() string { return "vault:" + o.Item + "@" + o.Rev }
+
+// parseCopyOrigin reads a [copied] value.
+func parseCopyOrigin(s string) (copyOrigin, bool) {
+	rest, ok := strings.CutPrefix(s, "vault:")
+	i := strings.LastIndex(rest, "@")
+	if !ok || i <= 0 {
+		return copyOrigin{}, false
+	}
+	o := copyOrigin{Item: rest[:i], Rev: rest[i+1:]}
+	dir, name := filepath.Split(o.Item)
+	if (dir != "skills/" && dir != "snippets/") || !validName(name) || o.Rev == "" || strings.Trim(o.Rev, "0123456789abcdef") != "" {
+		return copyOrigin{}, false
+	}
+	return o, true
 }
 
 // profileTool is one tool's entry in a [profiles.<p>] table: a home string,
@@ -162,6 +187,7 @@ type rawConfig struct {
 	Shares   map[string]rawShare               `toml:"shares"`
 	Tools    map[string]rawTool                `toml:"tools"`
 	Profiles map[string]map[string]profileTool `toml:"profiles"`
+	Copied   map[string]string                 `toml:"copied"`
 }
 
 func home() string {
@@ -219,8 +245,19 @@ func loadConfig() (*Config, error) {
 		return nil, fmt.Errorf("%s: unknown key %s", path, und[0])
 	}
 
-	cfg := &Config{Path: path, Hooks: raw.Hooks, Tools: map[string]*Tool{}, Profiles: map[string]map[string]string{}, Shared: map[string]map[string][]string{}, Shares: map[string]*Share{}}
+	cfg := &Config{Path: path, Hooks: raw.Hooks, Tools: map[string]*Tool{}, Profiles: map[string]map[string]string{}, Shared: map[string]map[string][]string{}, Shares: map[string]*Share{}, Copied: map[string]copyOrigin{}}
 	var problems []string
+	for p, v := range raw.Copied {
+		o, ok := parseCopyOrigin(v)
+		switch abs := expand(p); {
+		case !filepath.IsAbs(abs):
+			problems = append(problems, fmt.Sprintf("[copied] %q must be an absolute path or start with ~/", p))
+		case !ok:
+			problems = append(problems, fmt.Sprintf("[copied] %q = %q must be \"vault:skills/<name>@<sha>\" or \"vault:snippets/<name>.md@<sha>\"", p, v))
+		default:
+			cfg.Copied[abs] = o
+		}
+	}
 	for name, rt := range raw.Tools {
 		t := &Tool{Name: name, Env: rt.Env, EnvSource: "config", Base: rt.Base, Shared: rt.Shared}
 		if t.Env == "" {
