@@ -493,6 +493,55 @@ func TestShareOverlapRejected(t *testing.T) {
 	}
 }
 
+// A link under another share's link would be written inside that share's
+// source, so loadConfig names both shares and the outer path.
+func TestShareNestedRejected(t *testing.T) {
+	const star = "[shares.s]\nsource = \"~/src\"\ninto = \"~/dst\"\nitems = \"*\"\nexclude = [\"skip\"]\n"
+	for _, c := range []struct{ name, toml, want string }{
+		{"file link under a folder item", folderShare + "[shares.f]\nsource = \"~/src/AGENTS.md\"\nlinks = [\"~/dst/keep/x\"]\n",
+			"[shares.f] links ~/dst/keep/x inside ~/dst/keep, which [shares.s] links"},
+		{"file link under a file link", fileShare + "[shares.j]\nsource = \"~/src/CLAUDE.md\"\nlinks = [\"~/a/AGENTS.md/deep/x\"]\n",
+			"[shares.j] links ~/a/AGENTS.md/deep/x inside ~/a/AGENTS.md, which [shares.i] links"},
+		{"one share's links nested", "[shares.i]\nsource = \"~/src/AGENTS.md\"\nlinks = [\"~/a\", \"~/a/b\"]\n",
+			"[shares.i] links ~/a/b inside its own link ~/a"},
+		{"folder into under a file link", fileShare + "[shares.s]\nsource = \"~/src/skills\"\ninto = \"~/a/AGENTS.md\"\nitems = [\"keep\"]\n",
+			"[shares.s] links ~/a/AGENTS.md/keep inside ~/a/AGENTS.md, which [shares.i] links"},
+		{"file link under a star entry", star + "[shares.f]\nsource = \"~/f\"\nlinks = [\"~/dst/a/x\"]\n",
+			"[shares.f] links ~/dst/a/x inside ~/dst/a, which [shares.s] links"},
+		{"star into under a folder item", folderShare + "[shares.t]\nsource = \"~/other\"\ninto = \"~/dst/keep/sub\"\nitems = \"*\"\n",
+			"[shares.t] links every entry into ~/dst/keep/sub inside ~/dst/keep, which [shares.s] links"},
+		{"star into on a folder item", folderShare + "[shares.t]\nsource = \"~/other\"\ninto = \"~/dst/keep\"\nitems = \"*\"\n",
+			"[shares.t] links every entry into ~/dst/keep, which [shares.s] links"},
+		{"star into on another star's entry", star + "[shares.t]\nsource = \"~/other\"\ninto = \"~/dst/a\"\nitems = \"*\"\n",
+			"[shares.t] links every entry into ~/dst/a, which [shares.s] links"},
+		{"different items in one into", folderShare + "[shares.t]\nsource = \"~/other\"\ninto = \"~/dst\"\nitems = [\"other\"]\n", ""},
+		{"file link under an excluded star name", star + "[shares.f]\nsource = \"~/f\"\nlinks = [\"~/dst/skip/x\"]\n", ""},
+		{"file link under a star dotfile", star + "[shares.f]\nsource = \"~/f\"\nlinks = [\"~/dst/.hidden/x\"]\n", ""},
+		{"sibling paths sharing a prefix", fileShare + "[shares.j]\nsource = \"~/src/CLAUDE.md\"\nlinks = [\"~/a/AGENTS.md.bak\"]\n", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, _, err := shareSandbox(t, c.toml)
+			if c.want == "" {
+				if err != nil {
+					t.Fatalf("loadConfig rejected a valid config: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("loadConfig error = %v, want it to contain %q", err, c.want)
+			}
+		})
+	}
+}
+
+// A share with a problem of its own reports that problem, not a nesting one.
+func TestShareNestedSkipsBrokenShare(t *testing.T) {
+	_, _, err := shareSandbox(t, folderShare+"[shares.f]\nlinks = [\"~/dst/keep/x\"]\n")
+	if err == nil || !strings.Contains(err.Error(), "[shares.f] needs `source`") || strings.Contains(err.Error(), "inside") {
+		t.Fatalf("err = %v, want only the missing source", err)
+	}
+}
+
 // share add onto a path another share already links puts the config back
 // and exits 1, since the edited config no longer loads.
 func TestShareAddOverlapRestoresConfig(t *testing.T) {

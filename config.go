@@ -257,6 +257,15 @@ func loadConfig() (*Config, error) {
 			stars[s.Into] = name
 		}
 	}
+	// starClaim names the items = "*" share that owns path p, if one does.
+	starClaim := func(p string) (string, bool) {
+		dir, base := filepath.Dir(p), filepath.Base(p)
+		star, ok := stars[dir]
+		if !ok || strings.HasPrefix(base, ".") || slices.Contains(cfg.Shares[star].Exclude, base) {
+			return "", false
+		}
+		return star, true
+	}
 	for _, name := range cfg.shareNames() {
 		if broken[name] {
 			continue
@@ -267,8 +276,8 @@ func loadConfig() (*Config, error) {
 			paths = append(paths, filepath.Join(s.Into, item))
 		}
 		for _, p := range paths {
-			dir, base := filepath.Dir(p), filepath.Base(p)
-			if star, ok := stars[dir]; ok && !strings.HasPrefix(base, ".") && !slices.Contains(cfg.Shares[star].Exclude, base) {
+			if star, ok := starClaim(p); ok {
+				dir, base := filepath.Dir(p), filepath.Base(p)
 				problems = append(problems, fmt.Sprintf("[shares.%s] links every entry into %s, and [shares.%s] links %s; add %q to [shares.%s] exclude", star, tilde(dir), name, tilde(p), base, star))
 				continue
 			}
@@ -281,6 +290,42 @@ func loadConfig() (*Config, error) {
 				problems = append(problems, fmt.Sprintf("[shares.%s] and [shares.%s] both link %s; one path takes one share", owner, name, tilde(p)))
 			}
 		}
+	}
+	// No link lies under another link: the outer one is a symlink into a
+	// source, so apply would write the inner one inside that source. This
+	// compares the configured paths as text; it resolves no symlinked parent
+	// and folds no case, since `kennel env` loads the config on every cd.
+	linker := func(q string) (string, bool) {
+		if o, ok := claimed[q]; ok {
+			return o, true
+		}
+		return starClaim(q)
+	}
+	// nested walks from start up to the root and reports the first path some
+	// share links: what lies on that path, or inside it.
+	nested := func(name, what, start string, self bool) {
+		for q := start; ; q = filepath.Dir(q) {
+			if o, ok := linker(q); ok {
+				switch {
+				case o == name:
+					problems = append(problems, fmt.Sprintf("[shares.%s] %s inside its own link %s", name, what, tilde(q)))
+				case self && q == start:
+					problems = append(problems, fmt.Sprintf("[shares.%s] %s, which [shares.%s] links", name, what, o))
+				default:
+					problems = append(problems, fmt.Sprintf("[shares.%s] %s inside %s, which [shares.%s] links", name, what, tilde(q), o))
+				}
+				return
+			}
+			if filepath.Dir(q) == q {
+				return
+			}
+		}
+	}
+	for p, name := range claimed {
+		nested(name, "links "+tilde(p), filepath.Dir(p), false)
+	}
+	for into, name := range stars {
+		nested(name, "links every entry into "+tilde(into), into, true)
 	}
 	if _, ok := cfg.Tools["claude"]; !ok && (cfg.Hooks.Codex || cfg.Hooks.Pi) {
 		problems = append(problems, "[hooks] needs a [tools.claude] block: Claude's settings.json and hooks/ live in its base")

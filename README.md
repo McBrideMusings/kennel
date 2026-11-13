@@ -78,7 +78,8 @@ error. A `"*"` share claims every name in its `into`, so another share may link 
 only when the `"*"` share excludes it, and two `"*"` shares never share an `into`. When
 `source` is missing or not a folder, `plan` and `doctor` report it once and nothing in `into`
 counts as an orphan. One link path belongs to one share: `kennel` refuses a config where two
-shares link the same path, or one share lists a path twice.
+shares link the same path, one share lists a path twice, or a share links a path inside
+another link (a file link under a folder share's item, or under another file share's link).
 
 | Command | Does |
 | --- | --- |
