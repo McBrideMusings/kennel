@@ -118,22 +118,36 @@ func cmdHarness(cfg *Config, args []string) int {
 		return failf(harnessUsage)
 	}
 	section, scopeArg, harness, asJSON := args[1], "global", "claude", false
+	// --scope and --harness take their value as the next word or after =.
+	// A next word starting with -- is another flag, never a value; a folder
+	// with such a name goes after = or as ./--name.
 	for rest := args[2:]; len(rest) > 0; rest = rest[1:] {
-		switch rest[0] {
-		case "--json":
+		name, val, hasEq := strings.Cut(rest[0], "=")
+		switch {
+		case rest[0] == "-h" || rest[0] == "--help":
+			fmt.Println(harnessUsage)
+			return 0
+		case rest[0] == "--json":
 			asJSON = true
-		case "--scope", "--harness":
-			if len(rest) < 2 {
-				return failf(harnessUsage)
+		case name == "--scope" || name == "--harness":
+			if !hasEq {
+				if len(rest) < 2 || strings.HasPrefix(rest[1], "--") {
+					return failf("%s needs a value\n%s", name, harnessUsage)
+				}
+				val, rest = rest[1], rest[1:]
 			}
-			if rest[0] == "--scope" {
-				scopeArg = rest[1]
+			if val == "" {
+				return failf("%s needs a value\n%s", name, harnessUsage)
+			}
+			if name == "--scope" {
+				scopeArg = val
 			} else {
-				harness = rest[1]
+				harness = val
 			}
-			rest = rest[1:]
+		case strings.HasPrefix(rest[0], "-"):
+			return failf("unknown flag %s\n%s", rest[0], harnessUsage)
 		default:
-			return failf(harnessUsage)
+			return failf("unexpected argument %q\n%s", rest[0], harnessUsage)
 		}
 	}
 	if !slices.Contains(harnessNames, harness) {

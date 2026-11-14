@@ -305,6 +305,50 @@ func TestHarnessShowMCPRedacts(t *testing.T) {
 	}
 }
 
+func TestHarnessShowFlags(t *testing.T) {
+	_, proj := harnessSandbox(t)
+	want, code := quiet(t, func() int {
+		return run([]string{"harness", "show", "skills", "--scope", proj, "--harness", "codex", "--json"})
+	})
+	if code != 0 {
+		t.Fatalf("space form exited %d:\n%s", code, want)
+	}
+	got, code := quiet(t, func() int {
+		return run([]string{"harness", "show", "skills", "--scope=" + proj, "--harness=codex", "--json"})
+	})
+	if code != 0 || got != want {
+		t.Fatalf("= form exited %d:\n%s\nwant:\n%s", code, got, want)
+	}
+	for _, h := range []string{"-h", "--help"} {
+		if out, code := quiet(t, func() int { return run([]string{"harness", "show", "skills", h}) }); code != 0 || !strings.Contains(out, "usage:") {
+			t.Errorf("%s exited %d:\n%s", h, code, out)
+		}
+	}
+	for _, c := range []struct {
+		args []string
+		msg  string
+	}{
+		{[]string{"--scope", "--json"}, "--scope needs a value"},
+		{[]string{"--harness", "--json"}, "--harness needs a value"},
+		{[]string{"--scope"}, "--scope needs a value"},
+		{[]string{"--scope="}, "--scope needs a value"},
+		{[]string{"-json"}, "unknown flag -json"},
+		{[]string{"--json=false"}, "unknown flag --json=false"},
+		{[]string{"--"}, "unknown flag --"},
+		{[]string{"extra", "--json"}, `unexpected argument "extra"`},
+	} {
+		var stdout string
+		stderr, code := capture(t, &os.Stderr, func() int {
+			out, code := quiet(t, func() int { return run(append([]string{"harness", "show", "skills"}, c.args...)) })
+			stdout = out
+			return code
+		})
+		if code != 1 || stdout != "" || !strings.Contains(stderr, c.msg) || !strings.Contains(stderr, "usage:") {
+			t.Errorf("harness show skills %v exited %d, stdout %q, stderr:\n%s\nwant %q", c.args, code, stdout, stderr, c.msg)
+		}
+	}
+}
+
 func TestFileLogAndShow(t *testing.T) {
 	_, proj := harnessSandbox(t)
 	f := filepath.Join(proj, "CLAUDE.md")
