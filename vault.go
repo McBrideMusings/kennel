@@ -82,14 +82,6 @@ func openVault() (*vault, error) {
 			return nil, err
 		}
 	}
-	// Finder drops .DS_Store into every folder it opens. A user's
-	// init.templateDir may leave out info/.
-	if err := os.MkdirAll(filepath.Join(v.gitDir, "info"), 0o755); err != nil {
-		return nil, err
-	}
-	if err := os.WriteFile(filepath.Join(v.gitDir, "info", "exclude"), []byte(".DS_Store\n"), 0o644); err != nil {
-		return nil, err
-	}
 	if _, err := v.git("commit", "-q", "--allow-empty", "-m", "create the vault"); err != nil {
 		return nil, err
 	}
@@ -110,10 +102,22 @@ func (v *vault) git(args ...string) (string, error) {
 	}, args...)
 }
 
+// stage stages every change under paths, or the whole vault when none are
+// given. It is the vault's one ignore policy: -f so a .gitignore inside an
+// item never keeps its files out, and a pathspec that leaves out the
+// .DS_Store Finder drops into every folder it opens.
+func (v *vault) stage(paths ...string) error {
+	if len(paths) == 0 {
+		paths = []string{"."}
+	}
+	_, err := v.git(append(append([]string{"add", "-A", "-f", "--"}, paths...), ":(exclude,glob)**/.DS_Store")...)
+	return err
+}
+
 // commitPaths stages every change under paths and commits it with msg. It
 // reports whether there was anything to commit.
 func (v *vault) commitPaths(msg string, paths ...string) (bool, error) {
-	if _, err := v.git(append([]string{"add", "-A", "--"}, paths...)...); err != nil {
+	if err := v.stage(paths...); err != nil {
 		return false, err
 	}
 	staged, err := v.git(append([]string{"diff", "--cached", "--name-only", "--"}, paths...)...)
@@ -132,7 +136,7 @@ func (v *vault) commitPaths(msg string, paths ...string) (bool, error) {
 // sweep commits every change made outside kennel since the last commit as
 // one commit. Every vault command runs it first.
 func (v *vault) sweep() error {
-	if _, err := v.git("add", "-A"); err != nil {
+	if err := v.stage(); err != nil {
 		return err
 	}
 	staged, err := v.git("diff", "--cached", "--name-only", "-z")
@@ -287,12 +291,6 @@ func vaultAdd(v *vault, arg string) int {
 	if err := copyTree(src, dst); err != nil {
 		os.RemoveAll(dst)
 		return failf("copying %s into the vault: %v", tilde(src), err)
-	}
-	// -f: a .gitignore inside the skill must not keep its files out of the
-	// commit, since the original goes to the Trash.
-	if _, err := v.git("add", "-A", "-f", "--", rel); err != nil {
-		os.RemoveAll(dst)
-		return failf("%v", err)
 	}
 	done, err := v.commitPaths(fmt.Sprintf("add %s from %s", rel, tilde(src)), rel)
 	if err != nil || !done {

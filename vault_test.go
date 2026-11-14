@@ -151,3 +151,46 @@ func TestVaultAddRefuses(t *testing.T) {
 		t.Fatal("add of a folder with a link out of it did not exit 1")
 	}
 }
+
+// A .gitignore inside a skill keeps none of its files out of the vault: an
+// edit to an ignored file, and an ignored file made after the add, are in
+// the next sweep commit. Finder's .DS_Store is never committed, at add or at
+// a sweep.
+func TestVaultSweepIgnoredFiles(t *testing.T) {
+	h := vaultSandbox(t)
+	skill := filepath.Join(h, ".claude", "skills", "ign")
+	os.MkdirAll(filepath.Join(skill, "sub"), 0o755)
+	os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("s\n"), 0o644)
+	os.WriteFile(filepath.Join(skill, ".gitignore"), []byte("*.txt\n"), 0o644)
+	os.WriteFile(filepath.Join(skill, "x.txt"), []byte("one\n"), 0o644)
+	os.WriteFile(filepath.Join(skill, ".DS_Store"), []byte("f"), 0o644)
+	if out, code := vaultRun(t, "add", skill); code != 0 {
+		t.Fatalf("vault add exited %d: %s", code, out)
+	}
+	v := vaultAt()
+	// Finder's own files alone make no sweep commit.
+	os.WriteFile(filepath.Join(v.dir, ".DS_Store"), []byte("f"), 0o644)
+	os.WriteFile(filepath.Join(skill, ".DS_Store"), []byte("g"), 0o644)
+	head := func() string {
+		return gitT(t, h, "--git-dir="+v.gitDir, "--work-tree="+v.dir, "rev-parse", "HEAD")
+	}
+	before := head()
+	vaultLogLines(t, "ign")
+	if head() != before {
+		t.Fatal("a .DS_Store-only change made a sweep commit")
+	}
+	os.WriteFile(filepath.Join(skill, "x.txt"), []byte("two\n"), 0o644)
+	os.WriteFile(filepath.Join(skill, "sub", "y.txt"), []byte("new\n"), 0o644)
+	os.WriteFile(filepath.Join(skill, "sub", ".DS_Store"), []byte("f"), 0o644)
+	lines := vaultLogLines(t, "ign")
+	if len(lines) != 2 || !strings.Contains(lines[0], "sweep: 2 files changed") {
+		t.Fatalf("log after editing the ignored file = %q", lines)
+	}
+	if out, _ := vaultRun(t, "show", "skills/ign/x.txt@"+strings.Fields(lines[0])[0]); out != "two\n" {
+		t.Fatalf("x.txt at the sweep = %q", out)
+	}
+	files := gitT(t, h, "--git-dir="+v.gitDir, "--work-tree="+v.dir, "ls-tree", "-r", "--name-only", "HEAD")
+	if strings.Contains(files, ".DS_Store") || !strings.Contains(files, "skills/ign/sub/y.txt") {
+		t.Fatalf("vault tree = %q", files)
+	}
+}
