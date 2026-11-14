@@ -108,6 +108,7 @@ type mcpEntry struct {
 	Args    []string `json:"args,omitempty"`
 	URL     string   `json:"url,omitempty"`
 	File    string   `json:"file"`
+	Keys    []string `json:"keys"` // the keys that lead to the server's entry in File
 }
 
 func cmdHarness(cfg *Config, args []string) int {
@@ -670,7 +671,8 @@ type mcpServer struct {
 
 func (sc *harnessScope) mcp(scope string) ([]mcpEntry, error) {
 	out := []mcpEntry{}
-	add := func(file string, servers map[string]mcpServer) {
+	// at is the key path to the servers' table in file.
+	add := func(file string, servers map[string]mcpServer, at ...string) {
 		names := make([]string, 0, len(servers))
 		for n := range servers {
 			names = append(names, n)
@@ -684,7 +686,8 @@ func (sc *harnessScope) mcp(scope string) ([]mcpEntry, error) {
 					s.Type = "http"
 				}
 			}
-			out = append(out, mcpEntry{Name: n, Type: s.Type, Command: redactArg(s.Command), Args: redactArgs(s.Args), URL: redactArg(s.URL), File: file})
+			out = append(out, mcpEntry{Name: n, Type: s.Type, Command: redactArg(s.Command), Args: redactArgs(s.Args), URL: redactArg(s.URL), File: file,
+				Keys: append(append([]string{}, at...), n)})
 		}
 	}
 	switch sc.harness {
@@ -705,7 +708,7 @@ func (sc *harnessScope) mcp(scope string) ([]mcpEntry, error) {
 			return nil, err
 		}
 		if scope == "global" {
-			add(cj, c.MCPServers)
+			add(cj, c.MCPServers, "mcpServers")
 			break
 		}
 		mj := sc.in(scope, ".mcp.json")
@@ -715,8 +718,8 @@ func (sc *harnessScope) mcp(scope string) ([]mcpEntry, error) {
 		if _, err := readJSON(mj, &m); err != nil {
 			return nil, err
 		}
-		add(mj, m.MCPServers)
-		add(cj, c.Projects[sc.Root].MCPServers)
+		add(mj, m.MCPServers, "mcpServers")
+		add(cj, c.Projects[sc.Root].MCPServers, "projects", sc.Root, "mcpServers")
 	case "codex":
 		conf := sc.in(scope, "config.toml")
 		if scope == "project" {
@@ -728,7 +731,7 @@ func (sc *harnessScope) mcp(scope string) ([]mcpEntry, error) {
 		if _, err := readTOML(conf, &c); err != nil {
 			return nil, err
 		}
-		add(conf, c.MCPServers)
+		add(conf, c.MCPServers, "mcp_servers")
 	}
 	return out, nil
 }

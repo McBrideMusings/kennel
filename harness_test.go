@@ -256,6 +256,28 @@ func TestHarnessShowMCP(t *testing.T) {
 	if c := showJSON(t, "mcp", "--harness", "codex").names("name"); !eq(c[0], []string{"pencil"}) {
 		t.Fatalf("codex mcp = %q", c)
 	}
+	// each entry names the keys that lead to it in its file, so the app marks
+	// the right one when a name sits in two tables of .claude.json
+	p := showJSON(t, "mcp", "--scope", proj).names("keys")
+	local, _ := json.Marshal([]string{"projects", proj, "mcpServers", "local"})
+	if !eq(p[0], []string{`["mcpServers","playwright"]`, string(local)}) || !eq(p[1], []string{`["mcpServers","qmd"]`}) {
+		t.Fatalf("project mcp keys = %q", p)
+	}
+	if c := showJSON(t, "mcp", "--harness", "codex").names("keys"); !eq(c[0], []string{`["mcp_servers","pencil"]`}) {
+		t.Fatalf("codex mcp keys = %q", c)
+	}
+}
+
+// One server name under both mcpServers and projects[<dir>].mcpServers in
+// .claude.json: each entry's keys name its own block.
+func TestHarnessShowMCPSameName(t *testing.T) {
+	h, proj := harnessSandbox(t)
+	os.WriteFile(filepath.Join(h, ".claude-work", ".claude.json"), []byte(`{"projects":{"`+proj+`":{"mcpServers":{"qmd":{"command":"qmd"}}}},"mcpServers":{"qmd":{"command":"qmd"}}}`), 0o644)
+	p := showJSON(t, "mcp", "--scope", proj).names("keys")
+	local, _ := json.Marshal([]string{"projects", proj, "mcpServers", "qmd"})
+	if !eq(p[0], []string{`["mcpServers","playwright"]`, string(local)}) || !eq(p[1], []string{`["mcpServers","qmd"]`}) {
+		t.Fatalf("mcp keys = %q", p)
+	}
 }
 
 func TestRedactArgs(t *testing.T) {

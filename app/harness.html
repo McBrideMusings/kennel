@@ -40,6 +40,7 @@ button:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--acc);outli
 .nav a .n{color:var(--soft);font-variant-numeric:tabular-nums;min-width:3ch;text-align:right}
 .main{padding:16px 20px;overflow:hidden;min-width:0;min-height:0;display:flex}
 .gv{flex:1;display:grid;grid-template-columns:210px 1fr 210px;border:1px solid var(--line);border-radius:8px;background:var(--surface);overflow:hidden;min-height:0}
+.gv[inert]{opacity:.55}
 .gv .files{border-right:1px solid var(--line);padding:8px;overflow:auto}
 .gv .hist{border-left:1px solid var(--line);padding:8px;overflow:auto}
 .gv .doc{padding:14px 20px;overflow:auto;min-width:0}
@@ -115,7 +116,7 @@ button:disabled{opacity:.45;cursor:default}
   </div>
   <div class="body">
     <nav class="side nav" aria-label="Sections"><h3>Harness</h3><a href="#" data-sec="skills"><span>Skills</span><span class="n" id="n-skills"></span></a><a href="#" data-sec="guidance"><span>Guidance</span><span class="n" id="n-guidance"></span></a><a href="#" data-sec="permissions"><span>Permissions</span><span class="n" id="n-permissions"></span></a><a href="#" data-sec="hooks"><span>Hooks</span><span class="n" id="n-hooks"></span></a><a href="#" data-sec="mcp"><span>MCP servers</span><span class="n" id="n-mcp"></span></a><h3>Vault</h3><a href="#" data-sec="vskills"><span>Skills</span><span class="n" id="n-vskills"></span></a><a href="#" data-sec="vsnippets"><span>Snippets</span><span class="n" id="n-vsnippets"></span></a></nav>
-    <main class="main"><div class="gv">
+    <main class="main"><div class="gv" id="gv">
       <div class="files" id="tree" role="tree" aria-label="Skills"></div>
       <div class="mid"><div class="acts" id="acts"></div><div class="doc" id="doc"><div class="err">Waiting for the host to answer ui/initialize.</div></div></div>
       <div class="hist" id="hist"></div>
@@ -210,14 +211,18 @@ function onToolResult(r) {
 // opens has been listed by a harness show first.
 let loadSeq = 0, fileSeq = 0, startSeq = -1;
 // keep reopens the page on the row it names, or the selected one.
+// Until it returns, the page still shows the old scope, dimmed and inert, so
+// no click opens an old scope's file.
 async function load(keep) {
   const seq = ++loadSeq;
+  $("gv").inert = true;
   renderTop();
   const [got, vault] = await Promise.all([
     Promise.allSettled(HARNESS.map(s => kennelJSON("harness", "show", s, "--scope", S.scope, "--harness", S.harness))),
     kennelJSON("vault", "ls").catch(e => ({error: e.message})),
   ]);
   if (seq !== loadSeq) return;
+  $("gv").inert = false;
   S.shows = {}; S.vault = vault;
   got.forEach((g, i) => S.shows[HARNESS[i]] = g.status === "fulfilled" ? g.value : {error: g.reason.message});
   const ok = got.find(g => g.status === "fulfilled");
@@ -373,14 +378,42 @@ const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const findRule = e => e.problem ? null : e.decision === "setting"
   ? {match: (k => line => new RegExp("^\\s*" + reEsc(k) + "\\s*=").test(line))(e.rule.split(" = ")[0])}
   : {anchor: JSON.stringify(e.decision) + ":", match: line => line.includes(JSON.stringify(e.rule))};
-const findServer = name => {
-  const toml = new RegExp("^\\s*\\[mcp_servers\\.(" + reEsc(name) + "|" + reEsc(JSON.stringify(name)) + ")\\]");
-  return {match: line => line.includes(JSON.stringify(name) + ":") || toml.test(line)};
+// A server's mark follows its keys, since one name can sit under both
+// mcpServers and projects[<dir>].mcpServers in .claude.json.
+const findServer = e => {
+  if (!e.file.endsWith(".toml")) return {at: lines => jsonKeyLine(lines, e.keys)};
+  const toml = new RegExp("^\\s*\\[mcp_servers\\.(" + reEsc(e.name) + "|" + reEsc(JSON.stringify(e.name)) + ")\\]");
+  return {match: line => toml.test(line)};
 };
 const findCommand = e => e.command ? {anchor: JSON.stringify(e.event), match: line => line.includes(JSON.stringify(e.command).slice(1, -1))} : null;
+// jsonKeyLine is the index of the line holding the key path leads to in a
+// JSON file's lines, or -1.
+function jsonKeyLine(lines, path) {
+  const text = lines.join("\n"), stack = []; // one frame per open object or array
+  for (let i = 0, line = 0; i < text.length; i++) {
+    const c = text[i], top = stack[stack.length - 1];
+    if (c === "\n") line++;
+    else if (c === "{") stack.push({obj: true, wantKey: true, key: null});
+    else if (c === "[") stack.push({obj: false, key: null});
+    else if (c === "}" || c === "]") stack.pop();
+    else if (c === "," && top && top.obj) top.wantKey = true;
+    else if (c === '"') {
+      let j = i + 1;
+      while (j < text.length && text[j] !== '"') j += text[j] === "\\" ? 2 : 1;
+      if (top && top.obj && top.wantKey) {
+        try { top.key = JSON.parse(text.slice(i, j + 1)); } catch (_) { return -1; }
+        top.wantKey = false;
+        if (stack.length === path.length && stack.every((f, n) => f.key === path[n])) return line;
+      }
+      i = j;
+    }
+  }
+  return -1;
+}
 // markLine is the index of the line find marks, or -1.
 function markLine(lines, find) {
   if (!find) return -1;
+  if (find.at) return find.at(lines);
   const from = find.anchor ? lines.findIndex(l => l.includes(find.anchor)) : -1;
   const after = lines.findIndex((l, i) => i >= from && find.match(l));
   return after >= 0 ? after : lines.findIndex(find.match);
@@ -452,7 +485,7 @@ function renderTree() {
       for (const [e, i] of g.entries) leaf(b.scope + ":" + i, 1, esc(e.problem || e.rule), {file: e.file, find: findRule(e)}, "", e.problem || e.rule, e.problem ? "wrap bad" : "");
     }
     if (S.section === "mcp") b.entries.forEach((e, i) =>
-      leaf(b.scope + ":" + i, 0, esc(e.name), {file: e.file, find: findServer(e.name)}));
+      leaf(b.scope + ":" + i, 0, esc(e.name), {file: e.file, find: findServer(e)}));
   }
   $("tree").innerHTML = out.join("");
 }
