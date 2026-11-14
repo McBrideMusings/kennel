@@ -11,7 +11,8 @@
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#161615;--surface:#1f1f1d;--ink:#ecece8;--soft:#a3a39c;--line:#33332f;--tint:#282825;--acc:#86a8f5;--acc-t:#22304f;--ok:#7fd49b;--ok-t:#1d3326;--warn:#f0bd6a;--warn-t:#3a2e17;--bad:#f59a8f;--bad-t:#3d211e;color-scheme:dark}}
 :root[data-theme="dark"]{--bg:#161615;--surface:#1f1f1d;--ink:#ecece8;--soft:#a3a39c;--line:#33332f;--tint:#282825;--acc:#86a8f5;--acc-t:#22304f;--ok:#7fd49b;--ok-t:#1d3326;--warn:#f0bd6a;--warn-t:#3a2e17;--bad:#f59a8f;--bad-t:#3d211e;color-scheme:dark}
 html,body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 var(--sans)}
-.app{display:grid;grid-template-rows:44px 1fr;height:720px;width:100%;overflow:hidden}
+.app{display:grid;grid-template-rows:44px 1fr;height:min(720px,var(--max-h,720px));width:100%;overflow:hidden}
+.app.fill{height:100vh}
 .top{display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid var(--line);background:var(--surface)}
 .top h1{font-size:15px;font-weight:650;margin:0}
 .sp{flex:1}
@@ -158,9 +159,31 @@ window.addEventListener("message", e => {
   if (m.method === "ping" || m.method === "ui/resource-teardown") post({jsonrpc: "2.0", id: m.id, result: {}});
   else post({jsonrpc: "2.0", id: m.id, error: {code: -32601, message: "Method not found"}});
 });
+// The host's containerDimensions decide the app's height: a fixed height
+// means the host sizes the frame and the app fills it, a maxHeight caps the
+// app's own height (.app in the stylesheet), and neither leaves that height.
+// A context change replaces the field whole, since height and maxHeight
+// exclude each other; null clears it.
+let dims = {}, initialized = false, reported = null;
+const positive = v => Number.isFinite(v) && v > 0;
 function applyContext(ctx) {
   if (ctx.theme) document.documentElement.dataset.theme = ctx.theme;
+  if ("containerDimensions" in ctx) { dims = ctx.containerDimensions || {}; size(); }
 }
+function size() {
+  const app = document.querySelector(".app"), fixed = positive(dims.height);
+  app.classList.toggle("fill", fixed);
+  if (!fixed && positive(dims.maxHeight)) app.style.setProperty("--max-h", dims.maxHeight + "px");
+  else app.style.removeProperty("--max-h");
+  if (!initialized) return;
+  // A fixed height is the host's: report it rather than a frame the host may
+  // not have resized yet, so a host that applies size-changed never undoes it.
+  const height = fixed ? dims.height : Math.round(app.getBoundingClientRect().height), width = document.documentElement.scrollWidth;
+  if (reported && reported.height === height && reported.width === width) return;
+  reported = {width, height};
+  notify("ui/notifications/size-changed", reported);
+}
+window.addEventListener("resize", size);
 
 // kennel runs one kennel command through the server's kennel tool.
 async function kennel(...args) {
@@ -658,7 +681,8 @@ $("doc").addEventListener("click", e => {
     applyContext(host);
   } catch (e) {}
   notify("ui/notifications/initialized", {});
-  notify("ui/notifications/size-changed", {width: document.documentElement.scrollWidth, height: 720});
+  initialized = true;
+  size();
   kennelJSON("harness", "recent").then(r => { S.recent = r; renderTop(); }).catch(() => {});
   // A host that opened the page for a harness tool call sends its result,
   // which loads the scope the call resolved; any other host gets Global now.
