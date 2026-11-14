@@ -57,13 +57,16 @@ type hookHandler struct {
 }
 
 type claudeSettings struct {
-	Hooks map[string][]struct {
-		Matcher string `json:"matcher"`
-		Hooks   []struct {
-			Type    string `json:"type"`
-			Command string `json:"command"`
-			Timeout int    `json:"timeout"`
-		} `json:"hooks"`
+	Hooks map[string][]claudeHookGroup `json:"hooks"`
+}
+
+// claudeHookGroup is one matcher and its handlers under an event.
+type claudeHookGroup struct {
+	Matcher string `json:"matcher"`
+	Hooks   []struct {
+		Type    string `json:"type"`
+		Command string `json:"command"`
+		Timeout int    `json:"timeout"`
 	} `json:"hooks"`
 }
 

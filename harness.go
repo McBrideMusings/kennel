@@ -562,20 +562,22 @@ func (sc *harnessScope) hooks(scope string) ([]hookEntry, error) {
 			out = append(out, hs...)
 		}
 	case "codex":
-		f := sc.in(scope, "hooks.json")
-		dirs := []string{hooksDir(sc.cfg), sc.in(scope)}
+		// Codex merges hooks.json and config.toml's [hooks] tables in each layer.
+		dir := sc.in(scope)
 		if scope == "project" {
-			f = sc.in(scope, ".codex", "hooks.json")
-			dirs = []string{hooksDir(sc.cfg), sc.in(scope, ".codex")}
+			dir = sc.in(scope, ".codex")
 		}
-		hs, err := sc.hookFile(f, dirs)
-		if err != nil {
-			return nil, err
+		dirs := []string{hooksDir(sc.cfg), dir}
+		for _, f := range []string{filepath.Join(dir, "hooks.json"), filepath.Join(dir, "config.toml")} {
+			hs, err := sc.hookFile(f, dirs)
+			if err != nil {
+				return nil, err
+			}
+			for i := range hs {
+				hs[i].Generated = namesHooksDir(hs[i].Command, hooksDir(sc.cfg))
+			}
+			out = append(out, hs...)
 		}
-		for i := range hs {
-			hs[i].Generated = namesHooksDir(hs[i].Command, hooksDir(sc.cfg))
-		}
-		out = append(out, hs...)
 	case "pi":
 		dir := sc.in(scope, "extensions")
 		if scope == "project" {
@@ -610,8 +612,8 @@ func (sc *harnessScope) hooks(scope string) ([]hookEntry, error) {
 }
 
 // hookFile lists the command handlers in one Claude-shaped hooks file
-// (Claude's settings.json, Codex's hooks.json), in file order, with the
-// script each runs from one of dirs and that script's tag.
+// (Claude's settings.json, Codex's hooks.json or config.toml), in file
+// order, with the script each runs from one of dirs and that script's tag.
 func (sc *harnessScope) hookFile(path string, dirs []string) ([]hookEntry, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -621,10 +623,12 @@ func (sc *harnessScope) hookFile(path string, dirs []string) ([]hookEntry, error
 		return nil, err
 	}
 	var s claudeSettings
-	if err := json.Unmarshal(data, &s); err != nil {
-		return nil, fmt.Errorf("%s: %v", tilde(path), err)
+	var events []string
+	if strings.HasSuffix(path, ".toml") {
+		events, err = tomlHookEvents(data, &s)
+	} else if err = json.Unmarshal(data, &s); err == nil {
+		events, err = objectKeys(data, "hooks")
 	}
-	events, err := objectKeys(data, "hooks")
 	if err != nil {
 		return nil, fmt.Errorf("%s: %v", tilde(path), err)
 	}
@@ -659,6 +663,39 @@ func (sc *harnessScope) hookFile(path string, dirs []string) ([]hookEntry, error
 		}
 	}
 	return out, nil
+}
+
+// tomlHookEvents decodes a config.toml's [hooks] event tables into s and
+// returns their event names in file order. An event's value is an array of
+// handler groups; Codex keeps other keys under [hooks] too (the state
+// table, managed_dir), and those are skipped.
+func tomlHookEvents(data []byte, s *claudeSettings) ([]string, error) {
+	var raw struct {
+		Hooks map[string]toml.Primitive `toml:"hooks"`
+	}
+	md, err := toml.Decode(string(data), &raw)
+	if err != nil {
+		return nil, err
+	}
+	var events []string
+	for _, k := range md.Keys() {
+		if len(k) != 2 || k[0] != "hooks" || s.Hooks[k[1]] != nil {
+			continue
+		}
+		if t := md.Type(k...); t != "ArrayHash" && t != "Array" {
+			continue
+		}
+		var groups []claudeHookGroup
+		if err := md.PrimitiveDecode(raw.Hooks[k[1]], &groups); err != nil {
+			return nil, fmt.Errorf("hooks.%s: %v", k[1], err)
+		}
+		if s.Hooks == nil {
+			s.Hooks = map[string][]claudeHookGroup{}
+		}
+		s.Hooks[k[1]] = groups
+		events = append(events, k[1])
+	}
+	return events, nil
 }
 
 // ---- mcp ----

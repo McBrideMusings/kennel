@@ -385,7 +385,15 @@ const findServer = e => {
   const toml = new RegExp("^\\s*\\[mcp_servers\\.(" + reEsc(e.name) + "|" + reEsc(JSON.stringify(e.name)) + ")\\]");
   return {match: line => toml.test(line)};
 };
-const findCommand = e => e.command ? {anchor: JSON.stringify(e.event), match: line => line.includes(JSON.stringify(e.command).slice(1, -1))} : null;
+// A TOML basic string escapes quotes and backslashes as JSON does; a literal
+// string ('…' or '''…''') holds the command raw.
+const findCommand = e => {
+  if (!e.command) return null;
+  const basic = JSON.stringify(e.command).slice(1, -1);
+  if (!e.file.endsWith(".toml")) return {anchor: JSON.stringify(e.event), match: line => line.includes(basic)};
+  const ev = new RegExp("^\\s*\\[\\[?\\s*hooks\\s*\\.\\s*(" + reEsc(e.event) + "|" + reEsc(JSON.stringify(e.event)) + ")\\s*[.\\]]");
+  return {anchor: line => ev.test(line), match: line => line.includes('"' + basic + '"') || line.includes("'" + e.command + "'")};
+};
 // jsonKeyLine is the index of the line holding the key path leads to in a
 // JSON file's lines, or -1.
 function jsonKeyLine(lines, path) {
@@ -414,7 +422,7 @@ function jsonKeyLine(lines, path) {
 function markLine(lines, find) {
   if (!find) return -1;
   if (find.at) return find.at(lines);
-  const from = find.anchor ? lines.findIndex(l => l.includes(find.anchor)) : -1;
+  const from = find.anchor ? lines.findIndex(typeof find.anchor === "function" ? find.anchor : l => l.includes(find.anchor)) : -1;
   const after = lines.findIndex((l, i) => i >= from && find.match(l));
   return after >= 0 ? after : lines.findIndex(find.match);
 }

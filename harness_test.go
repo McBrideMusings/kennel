@@ -240,6 +240,38 @@ func TestHarnessShowHooks(t *testing.T) {
 	}
 }
 
+// Codex takes hooks inline in config.toml beside hooks.json and runs both:
+// each lists, hooks.json's first, with its own file.
+func TestHarnessShowHooksCodexConfigTOML(t *testing.T) {
+	h, proj := harnessSandbox(t)
+	conf := filepath.Join(h, ".codex", "config.toml")
+	body := "approval_policy = \"on-request\"\n[hooks]\nmanaged_dir = \"/x\"\n[hooks.state.\"/h/.codex/hooks.json:pre_tool_use:0:0\"]\ntrusted_hash = \"sha256:00\"\n[[hooks.SessionStart]]\n[[hooks.SessionStart.hooks]]\ntype = \"command\"\ncommand = 'bash ~/.claude/hooks/guard.sh'\n" +
+		"[[hooks.PreToolUse]]\nmatcher = \"^Bash$\"\n[[hooks.PreToolUse.hooks]]\ntype = \"command\"\ncommand = \"moshi \\\"pre\\\" now\"\n[mcp_servers.pencil]\ncommand = \"pencil\"\n"
+	if err := os.WriteFile(conf, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := showJSON(t, "hooks", "--harness", "codex")
+	if ev := c.names("event"); !eq(ev[0], []string{"PreToolUse", "Stop", "SessionStart", "PreToolUse"}) {
+		t.Fatalf("codex hook events = %q", ev)
+	}
+	hj := filepath.Join(h, ".codex", "hooks.json")
+	if f := c.names("file"); !eq(f[0], []string{hj, hj, conf, conf}) {
+		t.Fatalf("codex hook files = %q", f)
+	}
+	if cmd, sc, gen := c.names("command"), c.names("script"), c.names("generated"); cmd[0][3] != `moshi \"pre\" now` || sc[0][2] != filepath.Join(h, ".claude", "hooks", "guard.sh") || !eq(gen[0], []string{"true", "false", "true", "false"}) {
+		t.Fatalf("codex config.toml hooks = %q %q %q", cmd, sc, gen)
+	}
+	pconf := filepath.Join(proj, ".codex", "config.toml")
+	os.MkdirAll(filepath.Dir(pconf), 0o755)
+	if err := os.WriteFile(pconf, []byte("[[hooks.Stop]]\n[[hooks.Stop.hooks]]\ntype = \"command\"\ncommand = \"moshi stop\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := showJSON(t, "hooks", "--harness", "codex", "--scope", proj)
+	if cmd, f := p.names("command"), p.names("file"); !eq(cmd[0], []string{"moshi stop"}) || !eq(f[0], []string{pconf}) {
+		t.Fatalf("project codex config.toml hooks = %q %q", cmd, f)
+	}
+}
+
 func TestHarnessShowHooksWithoutClaudeTool(t *testing.T) {
 	h, _ := harnessSandbox(t)
 	if err := os.WriteFile(filepath.Join(h, ".cfg", "config.toml"), []byte("[tools.codex]\nbase = \"~/.codex\"\nshared = []\n[profiles.personal]\n"), 0o644); err != nil {
