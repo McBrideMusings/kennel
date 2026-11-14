@@ -59,6 +59,7 @@ type harnessShow struct {
 	Section string         `json:"section"`
 	Harness string         `json:"harness"`
 	Scope   harnessScope   `json:"scope"`
+	Rows    []string       `json:"rows,omitempty"` // Guidance: the root files' row labels, in sidebar order
 	Blocks  []harnessBlock `json:"blocks"`
 }
 
@@ -80,7 +81,8 @@ type skillEntry struct {
 
 type guidanceEntry struct {
 	Path string `json:"path"`
-	Rel  string `json:"rel"` // relative to the block's path
+	Rel  string `json:"rel"`           // relative to the block's path
+	Row  string `json:"row,omitempty"` // the root file's row label, from Rows
 }
 
 type permissionEntry struct {
@@ -207,6 +209,11 @@ func resolveScope(cfg *Config, arg, harness string) (*harnessScope, error) {
 // show reads one section: a Project block for a project scope, then Global.
 func (sc *harnessScope) show(section string) (*harnessShow, error) {
 	out := &harnessShow{Section: section, Harness: sc.harness, Scope: *sc}
+	if section == "guidance" {
+		for _, g := range guidanceRoots[sc.harness] {
+			out.Rows = append(out.Rows, g.label)
+		}
+	}
 	scopes := []string{"global"}
 	if sc.Kind == "project" {
 		scopes = []string{"project", "global"}
@@ -362,6 +369,17 @@ var guidanceNames = map[string][]string{
 	"pi":     {"AGENTS.md", "CLAUDE.md"},
 }
 
+// guidanceRoot is a root instruction file the app gives its own sidebar row.
+type guidanceRoot struct{ label, scope, name string }
+
+// guidanceRoots are each harness's three root files, in sidebar order. A row
+// stands whether or not its file exists in a scope.
+var guidanceRoots = map[string][]guidanceRoot{
+	"claude": {{"Global CLAUDE.md", "global", "CLAUDE.md"}, {"Project CLAUDE.md", "project", "CLAUDE.md"}, {"CLAUDE.local.md", "project", "CLAUDE.local.md"}},
+	"codex":  {{"Global AGENTS.md", "global", "AGENTS.md"}, {"Project AGENTS.md", "project", "AGENTS.md"}, {"AGENTS.override.md", "project", "AGENTS.override.md"}},
+	"pi":     {{"Global AGENTS.md", "global", "AGENTS.md"}, {"Project AGENTS.md", "project", "AGENTS.md"}, {"Project CLAUDE.md", "project", "CLAUDE.md"}},
+}
+
 func (sc *harnessScope) guidance(scope string) ([]guidanceEntry, error) {
 	base := sc.in(scope)
 	names := guidanceNames[sc.harness]
@@ -398,7 +416,13 @@ func (sc *harnessScope) guidance(scope string) ([]guidanceEntry, error) {
 	sort.Strings(rels)
 	out := []guidanceEntry{}
 	for _, r := range rels {
-		out = append(out, guidanceEntry{Path: filepath.Join(base, r), Rel: r})
+		e := guidanceEntry{Path: filepath.Join(base, r), Rel: r}
+		for _, g := range guidanceRoots[sc.harness] {
+			if g.scope == scope && g.name == r {
+				e.Row = g.label
+			}
+		}
+		out = append(out, e)
 	}
 	return out, nil
 }

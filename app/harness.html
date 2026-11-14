@@ -39,6 +39,7 @@ button:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--acc);outli
 .nav a{display:flex;justify-content:space-between;gap:8px;padding:5px 8px;border-radius:6px;color:var(--ink);text-decoration:none}
 .nav a.on{background:var(--acc-t);color:var(--acc);font-weight:600}
 .nav a .n{color:var(--soft);font-variant-numeric:tabular-nums;min-width:3ch;text-align:right}
+.nav a.off{color:var(--soft);opacity:.55;cursor:default}
 .main{padding:16px 20px;overflow:hidden;min-width:0;min-height:0;display:flex}
 .gv{flex:1;display:grid;grid-template-columns:210px 1fr 210px;border:1px solid var(--line);border-radius:8px;background:var(--surface);overflow:hidden;min-height:0}
 .gv[inert]{opacity:.55}
@@ -116,7 +117,7 @@ button:disabled{opacity:.45;cursor:default}
     </span>
   </div>
   <div class="body">
-    <nav class="side nav" aria-label="Sections"><h3>Harness</h3><a href="#" data-sec="skills"><span>Skills</span><span class="n" id="n-skills"></span></a><a href="#" data-sec="guidance"><span>Guidance</span><span class="n" id="n-guidance"></span></a><a href="#" data-sec="permissions"><span>Permissions</span><span class="n" id="n-permissions"></span></a><a href="#" data-sec="hooks"><span>Hooks</span><span class="n" id="n-hooks"></span></a><a href="#" data-sec="mcp"><span>MCP servers</span><span class="n" id="n-mcp"></span></a><h3>Vault</h3><a href="#" data-sec="vskills"><span>Skills</span><span class="n" id="n-vskills"></span></a><a href="#" data-sec="vsnippets"><span>Snippets</span><span class="n" id="n-vsnippets"></span></a></nav>
+    <nav class="side nav" aria-label="Sections"><h3>Harness</h3><a href="#" data-sec="skills"><span>Skills</span><span class="n" id="n-skills"></span></a><a href="#" data-sec="r0" class="off" aria-disabled="true" tabindex="-1"><span id="l-r0">Global CLAUDE.md</span><span class="n" id="n-r0"></span></a><a href="#" data-sec="r1" class="off" aria-disabled="true" tabindex="-1"><span id="l-r1">Project CLAUDE.md</span><span class="n" id="n-r1"></span></a><a href="#" data-sec="r2" class="off" aria-disabled="true" tabindex="-1"><span id="l-r2">CLAUDE.local.md</span><span class="n" id="n-r2"></span></a><a href="#" data-sec="guidance"><span>Guidance</span><span class="n" id="n-guidance"></span></a><a href="#" data-sec="permissions"><span>Permissions</span><span class="n" id="n-permissions"></span></a><a href="#" data-sec="hooks"><span>Hooks</span><span class="n" id="n-hooks"></span></a><a href="#" data-sec="mcp"><span>MCP servers</span><span class="n" id="n-mcp"></span></a><h3>Vault</h3><a href="#" data-sec="vskills"><span>Skills</span><span class="n" id="n-vskills"></span></a><a href="#" data-sec="vsnippets"><span>Snippets</span><span class="n" id="n-vsnippets"></span></a></nav>
     <main class="main"><div class="gv" id="gv">
       <div class="files" id="tree" role="tree" aria-label="Skills"></div>
       <div class="mid"><div class="acts" id="acts"></div><div class="doc" id="doc"><div class="err">Waiting for the host to answer ui/initialize.</div></div></div>
@@ -197,8 +198,12 @@ const kennelJSON = async (...args) => JSON.parse(await kennel(...args, "--json")
 // ---- state ----
 const SECTIONS = {skills: "Skills", guidance: "Guidance", permissions: "Permissions", hooks: "Hooks", mcp: "MCP servers", vskills: "Vault skills", vsnippets: "Snippets"};
 const HARNESS = ["skills", "guidance", "permissions", "hooks", "mcp"];
+const ROWS = ["r0", "r1", "r2"]; // the root guidance files' rows, labelled by harness show guidance
+const ROW_LABELS = {};             // per harness, the labels its last guidance show gave
 const isVault = sec => sec === "vskills" || sec === "vsnippets";
-const pageShow = () => isVault(S.section) ? S.vault : S.shows[S.section];
+const rowLabel = sec => { const g = S.shows.guidance; return g && g.rows ? g.rows[ROWS.indexOf(sec)] : null; };
+const rowEntry = sec => { const l = rowLabel(sec), g = S.shows.guidance; return l && g.blocks ? g.blocks.flatMap(b => b.entries).find(e => e.row === l) : null; };
+const pageShow = () => isVault(S.section) ? S.vault : S.shows[ROWS.includes(S.section) ? "guidance" : S.section];
 const S = {
   scope: "global",   // "global" or a directory
   harness: "claude",
@@ -274,7 +279,20 @@ function renderTop() {
 function renderCounts() {
   for (const s of HARNESS) {
     const show = S.shows[s];
-    $("n-" + s).textContent = show && show.blocks ? show.blocks.map(b => b.entries.length).join(" + ") : "";
+    // Guidance counts only the files without a row of their own
+    $("n-" + s).textContent = show && show.blocks ? show.blocks.map(b => b.entries.filter(e => !e.row).length).join(" + ") : "";
+  }
+  // a row whose file the scope lacks stays in place, greyed and disabled; a
+  // failed guidance show disables all three under the harness's last labels
+  const g = S.shows.guidance;
+  if (g && g.rows) ROW_LABELS[S.harness] = g.rows;
+  for (const [i, r] of ROWS.entries()) {
+    const on = !!rowEntry(r), a = document.querySelector(`[data-sec="${r}"]`), labels = ROW_LABELS[S.harness];
+    if (labels) $("l-" + r).textContent = labels[i];
+    $("n-" + r).textContent = on ? "" : "none";
+    a.classList.toggle("off", !on);
+    a.setAttribute("aria-disabled", !on);
+    on ? a.removeAttribute("tabindex") : a.setAttribute("tabindex", "-1");
   }
   $("n-vskills").textContent = S.vault.skills ? S.vault.skills.length : "";
   $("n-vsnippets").textContent = S.vault.snippets ? S.vault.snippets.length : "";
@@ -282,7 +300,7 @@ function renderCounts() {
 
 $("global").onclick = () => { S.scope = "global"; load(); };
 document.querySelectorAll("[data-h]").forEach(b => b.onclick = () => { S.harness = b.dataset.h; load(); });
-document.querySelectorAll("[data-sec]").forEach(a => a.onclick = e => { e.preventDefault(); if (S.section !== a.dataset.sec) { S.section = a.dataset.sec; openPage(); } });
+document.querySelectorAll("[data-sec]").forEach(a => a.onclick = e => { e.preventDefault(); if (!a.classList.contains("off") && S.section !== a.dataset.sec) { S.section = a.dataset.sec; openPage(); } });
 
 // ---- project picker ----
 $("project").onclick = async () => {
@@ -331,16 +349,17 @@ document.addEventListener("mousedown", e => { if (!e.target.closest(".pick")) $(
 function openPage(keep) {
   const want = keep === true ? S.sel : keep, wasOpen = S.open;
   document.querySelectorAll("[data-sec]").forEach(a => {
-    a.className = a.dataset.sec === S.section ? "on" : "";
+    a.classList.toggle("on", a.dataset.sec === S.section);
     a.toggleAttribute("aria-current", a.dataset.sec === S.section);
   });
-  $("tree").setAttribute("aria-label", SECTIONS[S.section]);
+  $("tree").setAttribute("aria-label", SECTIONS[S.section] || rowLabel(S.section) || "Guidance");
   fileSeq++;
   S.sel = S.file = S.find = S.rev = null; S.commits = [];
   $("doc").innerHTML = ""; renderHist(); renderActs();
   const show = pageShow();
   if (!show) { $("tree").innerHTML = ""; return; }
   if (show.error) { $("tree").innerHTML = ""; showError(show.error); return; }
+  if (ROWS.includes(S.section) && !rowEntry(S.section)) { $("tree").innerHTML = ""; showError("No " + (rowLabel(S.section) || "file") + " in this scope."); return; }
   S.open = defaultOpen(show);
   if (want) { for (const k of wasOpen) S.open.add(k); for (let d = want; d.includes("/"); d = d.slice(0, d.lastIndexOf("/"))) S.open.add(d); }
   renderTree();
@@ -494,6 +513,7 @@ function renderTree() {
   }
   if (S.section === "vsnippets") for (const it of show.snippets) leaf(it.path, 0, esc(it.name), {file: it.path, skill: it});
   for (const b of show.blocks || []) {
+    if (ROWS.includes(S.section) && !b.entries.some(e => e.row === rowLabel(S.section))) continue;
     // Add… sits on the block a vault install writes to
     const add = S.section === "skills" && b.scope === show.scope.kind ? `<button data-act="vault">Add…</button>` : "";
     out.push(`<div class="grp${add ? " gh" : ""}"><span class="tag ${b.scope === "project" ? "p" : "g"}">${b.scope === "project" ? "Project" : "Global"}</span>${add}</div>`);
@@ -501,7 +521,8 @@ function renderTree() {
       const name = s.vault ? `<span class="vlt">${esc(s.name)}${VAULT_ICON}</span>` : esc(s.name);
       if (folder(s.path, 0, name)) walkSkill(nest(s.files), s.path, 1, s);
     }
-    if (S.section === "guidance") walkGuidance(nest(b.entries.map(e => e.rel)), b.path, 0);
+    if (S.section === "guidance") walkGuidance(nest(b.entries.filter(e => !e.row).map(e => e.rel)), b.path, 0);
+    if (ROWS.includes(S.section)) for (const e of b.entries) if (e.row === rowLabel(S.section)) leaf(e.path, 0, esc(e.rel), {file: e.path});
     if (S.section === "hooks") for (const g of groups(b)) {
       if (!folder(b.scope + ":" + g.name, 0, esc(g.name), g.entries.length)) continue;
       for (const [e, i] of g.entries) {

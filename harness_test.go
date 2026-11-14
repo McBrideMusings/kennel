@@ -96,6 +96,7 @@ func showJSON(t *testing.T, args ...string) harnessShowOut {
 
 type harnessShowOut struct {
 	Scope  harnessScope `json:"scope"`
+	Rows   []string     `json:"rows"`
 	Blocks []struct {
 		Scope   string           `json:"scope"`
 		Path    string           `json:"path"`
@@ -145,6 +146,15 @@ func TestHarnessShowGuidance(t *testing.T) {
 	want := []string{".claude/rules/style.md", "CLAUDE.local.md", "CLAUDE.md", "apps/web/CLAUDE.md"}
 	if !eq(n[0], want) || !eq(n[1], []string{"CLAUDE.md"}) {
 		t.Fatalf("guidance = %q", n)
+	}
+	// the root files carry their sidebar row's label; nested files and rules carry none
+	s := showJSON(t, "guidance", "--scope", proj)
+	if r := s.names("row"); !eq(s.Rows, []string{"Global CLAUDE.md", "Project CLAUDE.md", "CLAUDE.local.md"}) ||
+		!eq(r[0], []string{"null", "CLAUDE.local.md", "Project CLAUDE.md", "null"}) || !eq(r[1], []string{"Global CLAUDE.md"}) {
+		t.Fatalf("guidance rows = %q, entry rows = %q", s.Rows, r)
+	}
+	if c := showJSON(t, "guidance", "--scope", "global", "--harness", "codex"); !eq(c.Rows, []string{"Global AGENTS.md", "Project AGENTS.md", "AGENTS.override.md"}) {
+		t.Fatalf("codex guidance rows = %q", c.Rows)
 	}
 }
 
