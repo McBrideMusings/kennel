@@ -85,7 +85,7 @@ type guidanceEntry struct {
 
 type permissionEntry struct {
 	Rule     string `json:"rule"`
-	Decision string `json:"decision"` // allow, ask, deny, setting for a Codex config value, or problem for a .rules file that failed
+	Decision string `json:"decision"` // allow, ask, deny, setting for a Codex config value, or problem for a file that failed to read
 	File     string `json:"file"`
 	Problem  string `json:"problem,omitempty"`
 }
@@ -411,6 +411,11 @@ func isFile(p string) bool {
 
 func (sc *harnessScope) permissions(scope string) ([]permissionEntry, error) {
 	out := []permissionEntry{}
+	// A file that fails to read stands as one problem entry, so the rest
+	// of the section still lists.
+	problem := func(file string, err error) {
+		out = append(out, permissionEntry{Rule: filepath.Base(file), Decision: "problem", File: file, Problem: err.Error()})
+	}
 	switch sc.harness {
 	case "claude":
 		files := []string{sc.in(scope, "settings.json")}
@@ -422,7 +427,8 @@ func (sc *harnessScope) permissions(scope string) ([]permissionEntry, error) {
 				Permissions struct{ Allow, Ask, Deny []string } `json:"permissions"`
 			}
 			if ok, err := readJSON(f, &s); err != nil {
-				return nil, err
+				problem(f, err)
+				continue
 			} else if !ok {
 				continue
 			}
@@ -444,11 +450,6 @@ func (sc *harnessScope) permissions(scope string) ([]permissionEntry, error) {
 		var c struct {
 			ApprovalPolicy string `toml:"approval_policy"`
 			SandboxMode    string `toml:"sandbox_mode"`
-		}
-		// A file that fails to read stands as one problem entry, so the rest
-		// of the section still lists.
-		problem := func(file string, err error) {
-			out = append(out, permissionEntry{Rule: filepath.Base(file), Decision: "problem", File: file, Problem: err.Error()})
 		}
 		if _, err := readTOML(conf, &c); err != nil {
 			problem(conf, err)

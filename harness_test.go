@@ -204,6 +204,26 @@ func TestHarnessShowPermissionsBadRules(t *testing.T) {
 	}
 }
 
+// A Claude settings file that fails to parse stands as one problem entry; the
+// other settings file still lists.
+func TestHarnessShowPermissionsBadClaudeSettings(t *testing.T) {
+	_, proj := harnessSandbox(t)
+	bad := filepath.Join(proj, ".claude", "settings.json")
+	for p, body := range map[string]string{bad: `{"permissions":`, filepath.Join(proj, ".claude", "settings.local.json"): `{"permissions":{"deny":["WebFetch"]}}`} {
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := showJSON(t, "permissions", "--scope", proj)
+	r, d, f, p := s.names("rule"), s.names("decision"), s.names("file"), s.names("problem")
+	if !eq(r[0], []string{"settings.json", "WebFetch"}) || !eq(d[0], []string{"problem", "deny"}) || f[0][0] != bad || p[0][0] == "null" || p[0][0] == "" {
+		t.Fatalf("claude permissions = %q %q %q %q", r, d, f, p)
+	}
+	if !eq(r[1], []string{"Read", "Bash(rm:*)"}) {
+		t.Fatalf("global claude permissions = %q", r[1])
+	}
+}
+
 func TestHarnessShowHooks(t *testing.T) {
 	h, proj := harnessSandbox(t)
 	s := showJSON(t, "hooks", "--scope", proj)
