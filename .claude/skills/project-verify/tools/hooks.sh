@@ -89,13 +89,13 @@ out=$(KENNEL_CONFIG_DIR=/nonexistent PI_NM=$NM node "$(dirname "$0")/pi-harness.
 echo "$out" | grep -q '^ls -> {"block":true' && pass "pi extension blocks every call when the list fails" || fail "pi fail-closed"
 rm -rf "$S"
 
-echo "== 9. the generated pi extension puts pi's session id in the hook payload"
+echo "== 9. the generated pi extension puts pi's session id in every hook payload"
 S=$(mktemp -d); mkdir -p "$S/.claude/hooks" "$S/.cfg" "$S/work"
-printf '#!/bin/sh\n# kennel-hook: portable\ncat > "%s/payload.json"\n' "$S" > "$S/.claude/hooks/capture.sh"
-jq -n --arg c "sh $S/.claude/hooks/capture.sh" '{hooks:{PreToolUse:[{matcher:"Bash",hooks:[{type:"command",command:$c}]}]}}' > "$S/.claude/settings.json"
+printf '#!/bin/sh\n# kennel-hook: portable\ncat >> "%s/payloads.jsonl"; echo >> "%s/payloads.jsonl"\n' "$S" "$S" > "$S/.claude/hooks/capture.sh"
+jq -n --arg c "sh $S/.claude/hooks/capture.sh" '{hooks:{PreToolUse:[{matcher:"Bash",hooks:[{type:"command",command:$c}]}],PostToolUse:[{matcher:"Bash",hooks:[{type:"command",command:$c}]}]}}' > "$S/.claude/settings.json"
 printf '[tools.claude]\nbase="%s/.claude"\nshared=[]\n[hooks]\npi=true\n' "$S" > "$S/.cfg/config.toml"
 HOME=$S KENNEL_CONFIG_DIR=$S/.cfg "$K" hooks apply >/dev/null
 HOME=$S KENNEL_CONFIG_DIR=$S/.cfg PI_CWD=$S/work PI_NM=$NM node "$(dirname "$0")/pi-harness.mjs" "$S/.pi/agent/extensions/kennel-hooks.ts" >/dev/null 2>&1
-echo "payload: $(jq -c '{session_id, tool_name, cwd}' "$S/payload.json" 2>&1)"
-[ "$(jq -r .session_id "$S/payload.json" 2>/dev/null)" = "019a-pi-harness" ] && pass "pi payload carries the session id" || fail "pi payload session id"
+ids=$(jq -rs 'map("\(.hook_event_name) \(.session_id)") | join(", ")' "$S/payloads.jsonl" 2>&1); echo "payloads: $ids"
+[ "$ids" = "PreToolUse 019a-pi-harness, PreToolUse 019a-pi-harness, PreToolUse 019a-pi-harness, PostToolUse 019a-pi-harness" ] && pass "every pi payload carries the session id" || fail "pi payload session id"
 rm -rf "$S"
