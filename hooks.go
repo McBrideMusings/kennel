@@ -145,13 +145,13 @@ func readClaudeHooks(cfg *Config) ([]hookHandler, error) {
 	}
 	var s claudeSettings
 	if err := json.Unmarshal(data, &s); err != nil {
-		return nil, fmt.Errorf("%s: %v", path, err)
+		return nil, fmt.Errorf("%s: %v", tilde(path), err)
 	}
 	// encoding/json loses the object's key order, so read the event names
 	// in file order separately.
 	events, err := objectKeys(data, "hooks")
 	if err != nil {
-		return nil, fmt.Errorf("%s: %v", path, err)
+		return nil, fmt.Errorf("%s: %v", tilde(path), err)
 	}
 	dir := hooksDir(cfg)
 	tags := map[string][2]string{}

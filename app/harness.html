@@ -484,7 +484,7 @@ function renderTree() {
       for (const [e, i] of g.entries) {
         const words = (e.command || "").trim().split(/\s+/);
         const name = e.script ? base(e.script) : words[0] + (words.length > 1 ? " …" : "");
-        leaf(b.scope + ":" + i, 1, esc(name || e.event), e.script ? {file: e.script} : {file: e.file, find: findCommand(e)},
+        leaf(b.scope + ":" + i, 1, esc(name || e.problem || e.event), e.script ? {file: e.script} : {file: e.file, find: findCommand(e)},
           e.generated ? CLAUDE_MARK() : "", e.problem || e.command, e.problem ? "wrap bad" : "wrap");
       }
     }
@@ -493,7 +493,7 @@ function renderTree() {
       for (const [e, i] of g.entries) leaf(b.scope + ":" + i, 1, esc(e.problem || e.rule), {file: e.file, find: findRule(e)}, "", e.problem || e.rule, e.problem ? "wrap bad" : "");
     }
     if (S.section === "mcp") b.entries.forEach((e, i) =>
-      leaf(b.scope + ":" + i, 0, esc(e.name), {file: e.file, find: findServer(e)}));
+      leaf(b.scope + ":" + i, 0, esc(e.problem || e.name), {file: e.file, find: e.problem ? null : findServer(e)}, "", e.problem || "", e.problem ? "wrap bad" : ""));
   }
   $("tree").innerHTML = out.join("");
 }

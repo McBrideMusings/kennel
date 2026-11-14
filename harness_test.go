@@ -570,3 +570,69 @@ func TestHarnessShowFollowsLinkedFolders(t *testing.T) {
 		t.Fatalf("skill files = %q, want %q", files, want)
 	}
 }
+
+// A hooks file that fails to parse lists as one problem entry; the other
+// files' hooks still list.
+func TestHarnessShowHooksBadFile(t *testing.T) {
+	h, proj := harnessSandbox(t)
+	bad := filepath.Join(proj, ".claude", "settings.json")
+	for p, body := range map[string]string{
+		bad: `{"hooks":`,
+		filepath.Join(proj, ".claude", "settings.local.json"): `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"moshi notify"}]}]}}`,
+		filepath.Join(h, ".codex", "config.toml"):             "[hooks\n",
+	} {
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := showJSON(t, "hooks", "--scope", proj)
+	ev, f, c, p := s.names("event"), s.names("file"), s.names("command"), s.names("problem")
+	if !eq(ev[0], []string{"problem", "Stop"}) || f[0][0] != bad || c[0][1] != "moshi notify" || !strings.Contains(p[0][0], "settings.json") {
+		t.Fatalf("project hooks = %q %q %q %q", ev, f, c, p)
+	}
+	x := showJSON(t, "hooks", "--harness", "codex")
+	if ev, f, p := x.names("event"), x.names("file"), x.names("problem"); !eq(ev[0], []string{"PreToolUse", "Stop", "problem"}) || f[0][2] != filepath.Join(h, ".codex", "config.toml") || !strings.Contains(p[0][2], "config.toml") {
+		t.Fatalf("codex hooks = %q %q %q", ev, f, p)
+	}
+}
+
+// An MCP config that fails to parse lists as one problem entry; the other
+// files' servers still list.
+func TestHarnessShowMCPBadFile(t *testing.T) {
+	h, proj := harnessSandbox(t)
+	bad := filepath.Join(proj, ".mcp.json")
+	for p, body := range map[string]string{bad: `{"mcpServers":`, filepath.Join(h, ".codex", "config.toml"): "[mcp_servers\n"} {
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := showJSON(t, "mcp", "--scope", proj)
+	n, ty, f, p := s.names("name"), s.names("type"), s.names("file"), s.names("problem")
+	if !eq(n[0], []string{".mcp.json", "local"}) || !eq(ty[0], []string{"problem", "http"}) || f[0][0] != bad || !strings.Contains(p[0][0], ".mcp.json") {
+		t.Fatalf("project mcp = %q %q %q %q", n, ty, f, p)
+	}
+	x := showJSON(t, "mcp", "--harness", "codex")
+	if ty, p := x.names("type"), x.names("problem"); !eq(ty[0], []string{"problem"}) || !strings.Contains(p[0][0], "config.toml") {
+		t.Fatalf("codex mcp = %q %q", ty, p)
+	}
+}
+
+// A bad Claude settings.json lists as a problem in Claude's global hooks and
+// in pi's, whose kennel extension runs Claude's hooks.
+func TestHarnessShowHooksBadClaudeSettingsPi(t *testing.T) {
+	h, _ := harnessSandbox(t)
+	bad := filepath.Join(h, ".claude", "settings.json")
+	ext := filepath.Join(h, ".pi", "agent", "extensions", "kennel-hooks.ts")
+	os.MkdirAll(filepath.Dir(ext), 0o755)
+	for p, body := range map[string]string{bad: `{"hooks":`, ext: "// kennel"} {
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, harness := range []string{"claude", "pi"} {
+		s := showJSON(t, "hooks", "--harness", harness)
+		if ev, f, p := s.names("event"), s.names("file"), s.names("problem"); !eq(ev[0], []string{"problem"}) || f[0][0] != bad || !strings.HasPrefix(p[0][0], "~/.claude/settings.json: ") {
+			t.Fatalf("%s hooks = %q %q %q", harness, ev, f, p)
+		}
+	}
+}

@@ -109,6 +109,7 @@ type mcpEntry struct {
 	URL     string   `json:"url,omitempty"`
 	File    string   `json:"file"`
 	Keys    []string `json:"keys"` // the keys that lead to the server's entry in File
+	Problem string   `json:"problem,omitempty"`
 }
 
 func cmdHarness(cfg *Config, args []string) int {
@@ -546,6 +547,11 @@ func codexRules(path string) ([]permissionEntry, error) {
 
 func (sc *harnessScope) hooks(scope string) ([]hookEntry, error) {
 	out := []hookEntry{}
+	// A file that fails to read stands as one problem entry, so the rest
+	// of the section still lists.
+	problem := func(file string, err error) {
+		out = append(out, hookEntry{Event: "problem", File: file, Problem: err.Error()})
+	}
 	switch sc.harness {
 	case "claude":
 		files := []string{sc.in(scope, "settings.json")}
@@ -557,7 +563,8 @@ func (sc *harnessScope) hooks(scope string) ([]hookEntry, error) {
 		for _, f := range files {
 			hs, err := sc.hookFile(f, dirs)
 			if err != nil {
-				return nil, err
+				problem(f, err)
+				continue
 			}
 			out = append(out, hs...)
 		}
@@ -571,7 +578,8 @@ func (sc *harnessScope) hooks(scope string) ([]hookEntry, error) {
 		for _, f := range []string{filepath.Join(dir, "hooks.json"), filepath.Join(dir, "config.toml")} {
 			hs, err := sc.hookFile(f, dirs)
 			if err != nil {
-				return nil, err
+				problem(f, err)
+				continue
 			}
 			for i := range hs {
 				hs[i].Generated = namesHooksDir(hs[i].Command, hooksDir(sc.cfg))
@@ -599,7 +607,8 @@ func (sc *harnessScope) hooks(scope string) ([]hookEntry, error) {
 			// kennel's extension runs Claude's shared handlers, read at pi's start.
 			handlers, err := readClaudeHooks(sc.cfg)
 			if err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return nil, err
+				problem(filepath.Join(toolBase(sc.cfg, "claude"), "settings.json"), err)
+				continue
 			}
 			for _, h := range handlers {
 				if h.shared("pi") {
@@ -709,6 +718,11 @@ type mcpServer struct {
 
 func (sc *harnessScope) mcp(scope string) ([]mcpEntry, error) {
 	out := []mcpEntry{}
+	// A file that fails to read stands as one problem entry, so the rest
+	// of the section still lists.
+	problem := func(file string, err error) {
+		out = append(out, mcpEntry{Name: filepath.Base(file), Type: "problem", File: file, Keys: []string{}, Problem: err.Error()})
+	}
 	// at is the key path to the servers' table in file.
 	add := func(file string, servers map[string]mcpServer, at ...string) {
 		names := make([]string, 0, len(servers))
@@ -743,7 +757,7 @@ func (sc *harnessScope) mcp(scope string) ([]mcpEntry, error) {
 			} `json:"projects"`
 		}
 		if _, err := readJSON(cj, &c); err != nil {
-			return nil, err
+			problem(cj, err)
 		}
 		if scope == "global" {
 			add(cj, c.MCPServers, "mcpServers")
@@ -754,7 +768,7 @@ func (sc *harnessScope) mcp(scope string) ([]mcpEntry, error) {
 			MCPServers map[string]mcpServer `json:"mcpServers"`
 		}
 		if _, err := readJSON(mj, &m); err != nil {
-			return nil, err
+			problem(mj, err)
 		}
 		add(mj, m.MCPServers, "mcpServers")
 		add(cj, c.Projects[sc.Root].MCPServers, "projects", sc.Root, "mcpServers")
@@ -767,7 +781,7 @@ func (sc *harnessScope) mcp(scope string) ([]mcpEntry, error) {
 			MCPServers map[string]mcpServer `toml:"mcp_servers"`
 		}
 		if _, err := readTOML(conf, &c); err != nil {
-			return nil, err
+			problem(conf, err)
 		}
 		add(conf, c.MCPServers, "mcp_servers")
 	}
@@ -1056,6 +1070,9 @@ func printShow(s *harnessShow) {
 				if e.Generated {
 					line += "  (from Claude's hooks)"
 				}
+				if e.Problem != "" {
+					line += "  (" + e.Problem + ")"
+				}
 				lines = append(lines, line)
 			}
 		case []mcpEntry:
@@ -1064,7 +1081,11 @@ func printShow(s *harnessShow) {
 				if e.Command != "" {
 					what = strings.Join(append([]string{e.Command}, e.Args...), " ")
 				}
-				lines = append(lines, e.Name+"\t"+e.Type+"\t"+what)
+				line := e.Name + "\t" + e.Type + "\t" + what
+				if e.Problem != "" {
+					line += "  (" + e.Problem + ")"
+				}
+				lines = append(lines, line)
 			}
 		}
 		for _, l := range lines {
