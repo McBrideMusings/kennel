@@ -449,7 +449,7 @@ export default function (pi: ExtensionAPI) {
 		const tool = CLAUDE_NAME[event.toolName] ?? event.toolName;
 		for (const h of handlers) {
 			if (h.event !== "PreToolUse" || !matches(h, tool)) continue;
-			const payload = { hook_event_name: "PreToolUse", tool_name: event.toolName, tool_input: event.input, cwd: ctx.cwd };
+			const payload = { hook_event_name: "PreToolUse", tool_name: event.toolName, tool_input: event.input, cwd: ctx.cwd, session_id: ctx.sessionManager.getSessionId() };
 			const v = await run(h.command, payload);
 			if (v.decision === "deny") return { block: true, reason: v.reason };
 			if (v.decision === "ask" && !(ctx.hasUI && (await ctx.ui.confirm("Hook asks", v.reason ?? "")))) {
@@ -465,7 +465,7 @@ export default function (pi: ExtensionAPI) {
 		const notes: string[] = [];
 		for (const h of handlers) {
 			if (h.event !== "PostToolUse" || !matches(h, tool)) continue;
-			const payload = { hook_event_name: "PostToolUse", tool_name: event.toolName, tool_input: event.input, tool_response: event.content, cwd: ctx.cwd };
+			const payload = { hook_event_name: "PostToolUse", tool_name: event.toolName, tool_input: event.input, tool_response: event.content, cwd: ctx.cwd, session_id: ctx.sessionManager.getSessionId() };
 			try {
 				const v = await run(h.command, payload);
 				if (v.context) notes.push(v.context);

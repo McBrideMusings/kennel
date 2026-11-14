@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -184,5 +185,54 @@ func TestHookSetsKennelHarness(t *testing.T) {
 	exe, _ := selfPath()
 	if got := strings.TrimSpace(string(b)); got != "pi "+exe {
 		t.Fatalf("KENNEL_HARNESS KENNEL_BIN = %q, want %q", got, "pi "+exe)
+	}
+}
+
+// pi's generated extension, run in node with pi's session id on its context,
+// sends that id through `kennel hook pi` to the repo's vault hook, and the
+// edit pi made through the link becomes a vault commit naming that session.
+func TestHookPiVaultCommitNamesSession(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is not installed; pi extensions run in node")
+	}
+	h, cfg := hookSandbox(t, "[hooks]\npi = true\n")
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("KENNEL_TEST_MAIN", "1") // every kennel the children start is this binary
+	// Installed as the README says: the repo's script in Claude's hooks folder.
+	script, err := os.ReadFile(filepath.Join("hooks", "kennel-vault-commit.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(h, ".claude", "hooks", "kennel-vault-commit.sh"), script, 0o755)
+	settings := `{"hooks": {"PostToolUse": [{"matcher": "Edit|Write|MultiEdit", "hooks": [{"type": "command", "command": "~/.claude/hooks/kennel-vault-commit.sh"}]}]}}`
+	os.WriteFile(filepath.Join(h, ".claude", "settings.json"), []byte(settings), 0o644)
+	if _, code := quiet(t, func() int { return cmdHooks(cfg, []string{"apply"}) }); code != 0 {
+		t.Fatal("hooks apply failed")
+	}
+
+	skill := filepath.Join(h, ".claude", "skills", "recomp")
+	os.MkdirAll(skill, 0o755)
+	os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("original\n"), 0o644)
+	// The hook runs in a child kennel, and an in-process vault command would
+	// hold the vault lock until the test exits, so add runs in a child too.
+	if out, err := exec.Command(os.Args[0], "vault", "add", skill).CombinedOutput(); err != nil {
+		t.Fatalf("vault add: %v: %s", err, out)
+	}
+	os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("edited\n"), 0o644)
+
+	ext := filepath.Join(h, ".pi", "agent", "extensions", "kennel-hooks.ts")
+	drive := filepath.Join(h, "drive.mjs")
+	os.WriteFile(drive, []byte(`const mod = await import(`+jsString(ext)+`);
+const on = {};
+mod.default({ on: (name, fn) => (on[name] = fn) });
+const ctx = { cwd: `+jsString(skill)+`, hasUI: false, sessionManager: { getSessionId: () => "019a-pi-session" }, ui: { notify: (m) => { console.error(m); process.exitCode = 1; } } };
+await on.tool_result({ toolName: "edit", input: { path: "SKILL.md", oldText: "original", newText: "edited" }, content: [] }, ctx);
+`), 0o644)
+	if out, err := exec.Command(node, drive).CombinedOutput(); err != nil {
+		t.Fatalf("node ran the extension: %v: %s", err, out)
+	}
+	if lines := vaultLogLines(t, "recomp"); len(lines) != 2 || !strings.HasSuffix(lines[0], "edit skills/recomp/SKILL.md (pi session 019a-pi-session)") {
+		t.Fatalf("log after pi's edit = %q", lines)
 	}
 }
