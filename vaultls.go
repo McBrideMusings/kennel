@@ -132,47 +132,10 @@ func vaultUnlink(v *vault, arg string) int {
 	if err != nil {
 		return failf("%v", err)
 	}
+	if err := v.placeCopy(cfg, rel, rev, dst, true); err != nil {
+		return failf("%v", err)
+	}
 	origin := copyOrigin{Item: rel, Rev: rev}
-	src, err := os.ReadFile(cfg.Path)
-	if err != nil {
-		return failf("%v", err)
-	}
-	edited, err := setCopied(src, tilde(dst), origin.String())
-	if err != nil {
-		return failf("%s: %v", cfg.Path, err)
-	}
-	// The files are written beside the link and swapped in, so a failure
-	// leaves the link as it was. The temp name is kennel's own.
-	target, err := os.Readlink(dst)
-	if err != nil {
-		return failf("%v", err)
-	}
-	fresh := filepath.Join(filepath.Dir(dst), "."+filepath.Base(dst)+".kennel-new")
-	os.RemoveAll(fresh)
-	if err := v.writeItem(rev, rel, fresh); err != nil {
-		os.RemoveAll(fresh)
-		return failf("copying %s: %v", rel, err)
-	}
-	if err := os.Remove(dst); err != nil {
-		os.RemoveAll(fresh)
-		return failf("%v", err)
-	}
-	if err := os.Rename(fresh, dst); err != nil {
-		os.RemoveAll(fresh)
-		if lerr := os.Symlink(target, dst); lerr != nil {
-			return failf("%v; putting the link back failed too: %v", err, lerr)
-		}
-		return failf("%v", err)
-	}
-	// The record goes with the files: without it the copy could never update,
-	// so a failed write puts the link back.
-	if _, err := rewriteConfig(cfg, src, edited); err != nil {
-		os.RemoveAll(dst)
-		if lerr := os.Symlink(target, dst); lerr != nil {
-			return failf("%v; putting the link back failed too: %v", err, lerr)
-		}
-		return failf("%v", err)
-	}
 	logf("vault unlink: %s -> files of %s (%s)", dst, rel, origin)
 	fmt.Printf("Unlinked %s\n  now a copy of %s at %s\n  recorded in %s [copied]\n", tilde(dst), rel, rev, tilde(cfg.Path))
 	return 0

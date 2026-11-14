@@ -118,6 +118,67 @@ func (v *vault) writeItem(rev, rel, dst string) error {
 	return nil
 }
 
+// placeCopy puts rel's files at rev in place of dst (a link into the vault,
+// an earlier copy, or nothing) and records dst in config.toml's [copied]
+// table. vault copy, unlink and update all go through it. An existing dst
+// is replaced only when replace is set: the caller has checked it is a link
+// into the vault or a copy that matches its recorded commit. The files are
+// written beside dst and swapped in, then the record is written; when either
+// step fails, dst is put back as it was. The two temp names are kennel's
+// own, so a crash's leftovers are cleared first.
+func (v *vault) placeCopy(cfg *Config, rel, rev, dst string, replace bool) error {
+	origin := copyOrigin{Item: rel, Rev: rev}
+	src, err := os.ReadFile(cfg.Path)
+	if err != nil {
+		return err
+	}
+	edited, err := setCopied(src, tilde(dst), origin.String())
+	if err != nil {
+		return fmt.Errorf("%s: %v", cfg.Path, err)
+	}
+	dir, base := filepath.Dir(dst), filepath.Base(dst)
+	fresh, old := filepath.Join(dir, "."+base+".kennel-new"), filepath.Join(dir, "."+base+".kennel-old")
+	_, lerr := os.Lstat(dst)
+	had := lerr == nil
+	if had && !replace {
+		return fmt.Errorf("%s already exists; nothing was copied", tilde(dst))
+	}
+	os.RemoveAll(fresh)
+	os.RemoveAll(old)
+	if err := v.writeItem(rev, rel, fresh); err != nil {
+		os.RemoveAll(fresh)
+		return fmt.Errorf("copying %s: %v", rel, err)
+	}
+	restore := func(err error) error {
+		if !had {
+			return err
+		}
+		if rerr := os.Rename(old, dst); rerr != nil {
+			return fmt.Errorf("%v; putting %s back failed too, it is at %s: %v", err, tilde(dst), tilde(old), rerr)
+		}
+		return err
+	}
+	if had {
+		if err := os.Rename(dst, old); err != nil {
+			os.RemoveAll(fresh)
+			return err
+		}
+	}
+	if err := os.Rename(fresh, dst); err != nil {
+		os.RemoveAll(fresh)
+		return restore(err)
+	}
+	// The record goes with the files: without it a copy could never update.
+	if _, err := rewriteConfig(cfg, src, edited); err != nil {
+		os.RemoveAll(dst)
+		return restore(err)
+	}
+	// old is the replaced link or a copy that matched a vault commit, so
+	// removing it loses nothing; a link goes, never what it points at.
+	os.RemoveAll(old)
+	return nil
+}
+
 // changedFiles lists the files of the copy at dst that differ from rel at
 // rev: changed, added or gone. Finder's .DS_Store does not count.
 func (v *vault) changedFiles(rev, rel, dst string) ([]string, error) {
@@ -370,23 +431,10 @@ func vaultCopy(v *vault, args []string) int {
 	if err != nil {
 		return failf("%v", err)
 	}
+	if err := v.placeCopy(cfg, rel, rev, dst, false); err != nil {
+		return failf("%v", err)
+	}
 	origin := copyOrigin{Item: rel, Rev: rev}
-	src, err := os.ReadFile(cfg.Path)
-	if err != nil {
-		return failf("%v", err)
-	}
-	edited, err := setCopied(src, tilde(dst), origin.String())
-	if err != nil {
-		return failf("%s: %v", cfg.Path, err)
-	}
-	if err := v.writeItem(rev, rel, dst); err != nil {
-		os.RemoveAll(dst)
-		return failf("copying %s: %v", rel, err)
-	}
-	if _, err := rewriteConfig(cfg, src, edited); err != nil {
-		os.RemoveAll(dst)
-		return failf("%v", err)
-	}
 	logf("vault copy: %s -> %s (%s)", rel, dst, origin)
 	fmt.Printf("Copied %s at %s\n  to %s\n  recorded in %s [copied]\n", rel, rev, tilde(dst), tilde(cfg.Path))
 	return 0
@@ -450,50 +498,10 @@ func vaultUpdate(v *vault, arg string) int {
 		}
 		return failf("%s differs from %s at %s in %d file(s); nothing was updated", tilde(dst), origin.Item, origin.Rev, len(changed))
 	}
+	if err := v.placeCopy(cfg, origin.Item, rev, dst, true); err != nil {
+		return failf("%v", err)
+	}
 	next := copyOrigin{Item: origin.Item, Rev: rev}
-	src, err := os.ReadFile(cfg.Path)
-	if err != nil {
-		return failf("%v", err)
-	}
-	edited, err := setCopied(src, tilde(dst), next.String())
-	if err != nil {
-		return failf("%s: %v", cfg.Path, err)
-	}
-	// The new version is written beside the copy and swapped in; the old
-	// files match a vault commit, so removing them loses nothing. The two
-	// temp names are kennel's own, so a crash's leftovers are cleared first.
-	dir, base := filepath.Dir(dst), filepath.Base(dst)
-	fresh, old := filepath.Join(dir, "."+base+".kennel-new"), filepath.Join(dir, "."+base+".kennel-old")
-	os.RemoveAll(fresh)
-	os.RemoveAll(old)
-	if err := v.writeItem(rev, origin.Item, fresh); err != nil {
-		os.RemoveAll(fresh)
-		return failf("%v", err)
-	}
-	// The record moves first, and back if the swap fails, so the record
-	// never names a commit the files do not match.
-	if _, err := rewriteConfig(cfg, src, edited); err != nil {
-		os.RemoveAll(fresh)
-		return failf("%v", err)
-	}
-	swap := func() error {
-		if err := os.Rename(dst, old); err != nil {
-			return err
-		}
-		if err := os.Rename(fresh, dst); err != nil {
-			os.Rename(old, dst)
-			return err
-		}
-		return nil
-	}
-	if err := swap(); err != nil {
-		os.RemoveAll(fresh)
-		if werr := writeAtomic(cfg.Path, src); werr != nil {
-			return failf("%v; putting back %s failed too: %v", err, tilde(cfg.Path), werr)
-		}
-		return failf("%v", err)
-	}
-	os.RemoveAll(old)
 	logf("vault update: %s %s -> %s", dst, origin, next)
 	fmt.Printf("Updated %s\n  %s → %s\n", tilde(dst), origin, next)
 	return 0

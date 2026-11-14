@@ -255,3 +255,61 @@ func TestVaultCopySnippetAndLeftovers(t *testing.T) {
 		t.Fatal("update left a temp folder")
 	}
 }
+
+// copy, update and unlink with a config kennel cannot write leave the path as
+// it was: no copy, the copy's old files, or the link, and no temp folder.
+func TestVaultPlaceCopyUnwritableConfig(t *testing.T) {
+	h, item := vaultWithSkill(t)
+	cfgDir, proj := filepath.Join(h, ".cfg"), filepath.Join(h, "proj")
+	os.MkdirAll(proj, 0o755)
+	cp := filepath.Join(proj, "recomp")
+	noTemps := func(when string) {
+		t.Helper()
+		if exists(filepath.Join(proj, ".recomp.kennel-new")) || exists(filepath.Join(proj, ".recomp.kennel-old")) {
+			t.Fatalf("%s left a temp folder", when)
+		}
+	}
+
+	os.Chmod(cfgDir, 0o555)
+	_, code := vaultRun(t, "copy", "recomp", proj)
+	os.Chmod(cfgDir, 0o755)
+	if code != 1 || exists(cp) {
+		t.Fatalf("copy with an unwritable config exited %d, copy left: %v", code, exists(cp))
+	}
+	noTemps("a failed copy")
+
+	if out, code := vaultRun(t, "copy", "recomp", proj); code != 0 {
+		t.Fatalf("copy exited %d: %s", code, out)
+	}
+	before, _ := os.ReadFile(filepath.Join(cfgDir, "config.toml"))
+	os.WriteFile(filepath.Join(item, "SKILL.md"), []byte("v2\n"), 0o644)
+	os.Chmod(cfgDir, 0o555)
+	_, code = vaultRun(t, "update", cp)
+	os.Chmod(cfgDir, 0o755)
+	if code != 1 {
+		t.Fatal("update with an unwritable config did not exit 1")
+	}
+	if b, _ := os.ReadFile(filepath.Join(cp, "SKILL.md")); string(b) != "v1\n" {
+		t.Fatalf("after a failed update SKILL.md = %q", b)
+	}
+	if after, _ := os.ReadFile(filepath.Join(cfgDir, "config.toml")); string(after) != string(before) {
+		t.Fatalf("a failed update changed config.toml:\n%s", after)
+	}
+	noTemps("a failed update")
+
+	if out, code := vaultRun(t, "install", "recomp", "claude"); code != 0 {
+		t.Fatalf("install exited %d: %s", code, out)
+	}
+	link := filepath.Join(h, ".claude", "skills", "recomp")
+	os.Chmod(cfgDir, 0o555)
+	_, code = vaultRun(t, "unlink", link)
+	os.Chmod(cfgDir, 0o755)
+	if got, _ := os.Readlink(link); code != 1 || got != item {
+		t.Fatalf("unlink with an unwritable config exited %d, link now %q", code, got)
+	}
+	for _, tmp := range []string{".recomp.kennel-new", ".recomp.kennel-old"} {
+		if exists(filepath.Join(h, ".claude", "skills", tmp)) {
+			t.Fatalf("a failed unlink left %s", tmp)
+		}
+	}
+}
