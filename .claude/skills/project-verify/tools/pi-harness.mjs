@@ -8,7 +8,7 @@ const handlers = {};
 const notes = [];
 const pi = { on: (ev, fn) => (handlers[ev] = fn) };
 mod.default(pi);
-const ctx = { cwd: process.env.HOME + "/Projects/kennel", hasUI: false, ui: { notify: (m, l) => notes.push(l + ": " + m), confirm: async () => false } };
+const ctx = { cwd: process.env.PI_CWD ?? process.env.HOME + "/Projects/kennel", hasUI: false, sessionManager: { getSessionId: () => "019a-pi-harness" }, ui: { notify: (m, l) => notes.push(l + ": " + m), confirm: async () => false } };
 await handlers.session_start({}, ctx);
 const deny = await handlers.tool_call({ toolName: "bash", input: { command: "git log @{u}" } }, ctx);
 console.log("brace refspec ->", JSON.stringify(deny).slice(0, 120));

@@ -14,7 +14,8 @@ description: "kennel: prove a change works on the real CLI — routing, expiry, 
    a pi deny), then `kennel hooks apply` in a throwaway HOME seeded with copies of the real
    `~/.codex/hooks.json` and `~/.claude/settings.json`: opt-in off changes nothing, a second
    apply is byte-identical, and the herdr and github-owner entries survive; last it loads the
-   generated pi extension with pi's own jiti and fires its handlers. Every line `PASS`.
+   generated pi extension with pi's own jiti and fires its handlers, and checks a hook's payload
+   carries the session id pi's `sessionManager` gives. Every line `PASS`.
 4. `KENNEL_FISH=<fish binary> bash .claude/skills/project-verify/tools/shells.sh` — sources
    `kennel init bash` in `/bin/bash` (3.2) and Homebrew bash and `kennel init fish` in fish,
    cds into two routed directories (one home holding `'` and `\`) and out, and checks the
