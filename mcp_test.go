@@ -158,6 +158,23 @@ func TestMCPKennelToolRunsOnlyAppCommands(t *testing.T) {
 	if r := callTool(t, cs, "kennel", map[string]any{"args": []string{"file", "show", filepath.Join(proj, ".claude", "skills", "chat-mod", "SKILL.md") + "@HEAD"}}); r.IsError || toolText(r) != "project skill\n" {
 		t.Fatalf("file show of a listed skill file at HEAD = %v %q", r.IsError, toolText(r))
 	}
+	for _, args := range [][]string{
+		{"harness", "show", "guidance", "--scope", proj, "--json", "extra"},
+		{"harness", "show", "guidance", "--json", "--json"},
+		{"harness", "show", "guidance", "--scope"},
+		{"harness", "show", "guidance", "--scope=" + proj},
+		{"harness", "show", "nope"},
+		{"harness", "show"},
+		{"harness", "recent", "--json", "extra"},
+		{"harness", "recent", "--help"},
+	} {
+		if r := callTool(t, cs, "kennel", map[string]any{"args": args}); !r.IsError || !strings.Contains(toolText(r), "not a command the app runs") {
+			t.Fatalf("%v = %v %q", args, r.IsError, toolText(r))
+		}
+	}
+	if r := callTool(t, cs, "kennel", map[string]any{"args": []string{"harness", "show", "skills", "--harness", "codex", "--scope", proj, "--json"}}); r.IsError {
+		t.Fatalf("harness show in the app's shape: %s", toolText(r))
+	}
 	r = callTool(t, cs, "kennel", map[string]any{"args": []string{"route", "add", proj, "personal"}})
 	if !r.IsError || !strings.Contains(toolText(r), "not a command the app runs") {
 		t.Fatalf("route add = %v %q", r.IsError, toolText(r))

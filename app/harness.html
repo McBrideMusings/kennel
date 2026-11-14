@@ -117,7 +117,7 @@ button:disabled{opacity:.45;cursor:default}
     <nav class="side nav" aria-label="Sections"><h3>Harness</h3><a href="#" data-sec="skills"><span>Skills</span><span class="n" id="n-skills"></span></a><a href="#" data-sec="guidance"><span>Guidance</span><span class="n" id="n-guidance"></span></a><a href="#" data-sec="permissions"><span>Permissions</span><span class="n" id="n-permissions"></span></a><a href="#" data-sec="hooks"><span>Hooks</span><span class="n" id="n-hooks"></span></a><a href="#" data-sec="mcp"><span>MCP servers</span><span class="n" id="n-mcp"></span></a><h3>Vault</h3><a href="#" data-sec="vskills"><span>Skills</span><span class="n" id="n-vskills"></span></a><a href="#" data-sec="vsnippets"><span>Snippets</span><span class="n" id="n-vsnippets"></span></a></nav>
     <main class="main"><div class="gv">
       <div class="files" id="tree" role="tree" aria-label="Skills"></div>
-      <div class="mid"><div class="acts" id="acts"></div><div class="doc" id="doc"></div></div>
+      <div class="mid"><div class="acts" id="acts"></div><div class="doc" id="doc"><div class="err">Waiting for the host to answer ui/initialize.</div></div></div>
       <div class="hist" id="hist"></div>
     </div></main>
   </div>
@@ -197,13 +197,18 @@ function onToolInput(a) {
 }
 function onToolResult(r) {
   if (r.isError) { showError((r.content || []).map(c => c.text).join("")); return; }
-  if (r.structuredContent && loadSeq === 0) { setScope(r.structuredContent); load(); } // a pick made before it arrived wins
+  // A pick made before it arrived wins; the load started for a host without
+  // a tool call does not. A result without a scope loads Global.
+  if (loadSeq !== 0 && loadSeq !== startSeq) return;
+  startSeq = -1;
+  if (r.structuredContent) setScope(r.structuredContent);
+  load();
 }
 
 // Each load and file pick takes a number; a reply for an older one is dropped.
 // A load reads every section, so the counts are whole and every file a page
 // opens has been listed by a harness show first.
-let loadSeq = 0, fileSeq = 0;
+let loadSeq = 0, fileSeq = 0, startSeq = -1;
 // keep reopens the page on the row it names, or the selected one.
 async function load(keep) {
   const seq = ++loadSeq;
@@ -264,13 +269,27 @@ function renderRecent() {
   $("recent").innerHTML = S.recent.filter(d => !q || d.short.toLowerCase().includes(q)).map(d =>
     `<button class="it${d.dir === cur ? " on" : ""}" role="option" data-dir="${esc(d.dir)}">${esc(d.short)}</button>`).join("");
 }
-const openDir = dir => { $("dd").hidden = true; S.scope = dir; S.project = dir; load(); };
-$("filter").oninput = renderRecent;
+const openDir = dir => { typeSeq++; $("dd").hidden = true; S.scope = dir; S.project = dir; load(); };
+// openTyped opens a typed folder once a harness show has read it, so a typo
+// stays in the picker with its error and the scope does not change.
+let typeSeq = 0;
+async function openTyped(v) {
+  // a later keystroke, Enter or load (a Global or harness pick) drops this one
+  const seq = ++typeSeq, at = loadSeq, live = () => seq === typeSeq && at === loadSeq && !$("dd").hidden;
+  let show;
+  try { show = await kennelJSON("harness", "show", "guidance", "--scope", v, "--harness", S.harness); }
+  catch (e) {
+    if (live()) $("recent").innerHTML = '<div class="err">' + esc(e.message) + "</div>";
+    return;
+  }
+  if (live()) openDir(show.scope.dir);
+}
+$("filter").oninput = () => { typeSeq++; renderRecent(); };
 $("filter").onkeydown = e => {
   if (e.key === "Escape") { $("dd").hidden = true; $("project").focus(); }
   if (e.key !== "Enter") return;
   const v = $("filter").value.trim();
-  if (v.startsWith("/") || v.startsWith("~")) return openDir(v);
+  if (v.startsWith("/") || v.startsWith("~")) return openTyped(v);
   const hit = $("recent").querySelector(".it");
   if (hit) openDir(hit.dataset.dir);
 };
@@ -591,13 +610,18 @@ $("doc").addEventListener("click", e => {
 // ---- start ----
 (async () => {
   renderTop();
+  let host = {};
   try {
     const r = await request("ui/initialize", {appInfo: {name: "kennel", version: "0.1.0"}, appCapabilities: {}, protocolVersion: "2026-01-26"});
-    applyContext((r && r.hostContext) || {});
+    host = (r && r.hostContext) || {};
+    applyContext(host);
   } catch (e) {}
   notify("ui/notifications/initialized", {});
   notify("ui/notifications/size-changed", {width: document.documentElement.scrollWidth, height: 720});
   kennelJSON("harness", "recent").then(r => { S.recent = r; renderTop(); }).catch(() => {});
+  // A host that opened the page for a harness tool call sends its result,
+  // which loads the scope the call resolved; any other host gets Global now.
+  if (!host.toolInfo && loadSeq === 0) { load(); startSeq = loadSeq; }
 })();
 </script>
 </body>

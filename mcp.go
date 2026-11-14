@@ -276,6 +276,9 @@ func kennelTool(ctx context.Context, req *mcp.CallToolRequest, seen *shown) (*mc
 			return toolError(fmt.Sprintf("%s is not a file the app has listed", tilde(path))), nil
 		}
 	}
+	if in.Args[0] == "harness" && !harnessArgsOK(in.Args[1:]) {
+		return toolError(fmt.Sprintf("kennel %s is not a command the app runs", strings.Join(in.Args, " "))), nil
+	}
 	if in.Args[0] == "vault" {
 		if msg := vaultGate(in.Args[1:], seen); msg != "" {
 			return toolError(msg), nil
@@ -289,6 +292,37 @@ func kennelTool(ctx context.Context, req *mcp.CallToolRequest, seen *shown) (*mc
 		seen.add(out)
 	}
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: out}}}, nil
+}
+
+// harnessArgsOK reports whether a harness command has the words the app sends:
+// recent [--json], or show <section> with --scope <dir>, --harness <name> and
+// --json, each at most once.
+func harnessArgsOK(args []string) bool {
+	if args[0] == "recent" {
+		return len(args) == 1 || (len(args) == 2 && args[1] == "--json")
+	}
+	if len(args) < 2 || !slices.Contains(harnessSections, args[1]) {
+		return false
+	}
+	used := map[string]bool{}
+	for rest := args[2:]; len(rest) > 0; rest = rest[1:] {
+		flag := rest[0]
+		if used[flag] {
+			return false
+		}
+		used[flag] = true
+		switch flag {
+		case "--json":
+		case "--scope", "--harness":
+			if len(rest) < 2 {
+				return false
+			}
+			rest = rest[1:]
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // vaultGate checks one vault command's words against what the app was shown,
