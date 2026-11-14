@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -668,7 +670,7 @@ func (sc *harnessScope) mcp(scope string) ([]mcpEntry, error) {
 					s.Type = "http"
 				}
 			}
-			out = append(out, mcpEntry{Name: n, Type: s.Type, Command: s.Command, Args: s.Args, URL: s.URL, File: file})
+			out = append(out, mcpEntry{Name: n, Type: s.Type, Command: redactArg(s.Command), Args: redactArgs(s.Args), URL: redactArg(s.URL), File: file})
 		}
 	}
 	switch sc.harness {
@@ -715,6 +717,215 @@ func (sc *harnessScope) mcp(scope string) ([]mcpEntry, error) {
 		add(conf, c.MCPServers)
 	}
 	return out, nil
+}
+
+// redacted stands in for a value that may be a secret.
+const redacted = "REDACTED"
+
+// secretWords are the words that make a flag, variable, header or JSON key
+// name a secret. A name matches when one of its words (split at - _ . and
+// lower-to-upper case changes) is in the set: --api-key, GITHUB_TOKEN and
+// apiKey match; --author and --keyfile do not.
+var secretWords = map[string]bool{
+	"token": true, "secret": true, "password": true, "passwd": true, "pass": true, "pwd": true,
+	"key": true, "apikey": true, "auth": true, "authorization": true, "bearer": true,
+	"credential": true, "credentials": true, "cookie": true, "session": true, "pat": true,
+	"jwt": true, "sig": true, "signature": true,
+}
+
+// nameWords splits a name into lowercase words at - _ . and case changes.
+func nameWords(name string) []string {
+	var words []string
+	var w []rune
+	flush := func() {
+		if len(w) > 0 {
+			words = append(words, strings.ToLower(string(w)))
+			w = w[:0]
+		}
+	}
+	prevLower := false
+	for _, r := range name {
+		switch {
+		case r == '-' || r == '_' || r == '.':
+			flush()
+			prevLower = false
+			continue
+		case r >= 'A' && r <= 'Z' && prevLower:
+			flush()
+		}
+		w = append(w, r)
+		prevLower = r >= 'a' && r <= 'z' || r >= '0' && r <= '9'
+	}
+	flush()
+	return words
+}
+
+// secretName reports whether a name names a secret. A switch that turns
+// something off (--no-auth, --disable-auth) takes no value, so it does not.
+func secretName(name string) bool {
+	words := nameWords(name)
+	if len(words) > 1 && (words[0] == "no" || words[0] == "disable" || words[0] == "skip" || words[0] == "without") {
+		return false
+	}
+	for _, w := range words {
+		if secretWords[w] {
+			return true
+		}
+	}
+	return false
+}
+
+// envRef reports whether a value only names an environment variable
+// ($VAR or ${VAR}), which shows where the secret comes from, not the secret.
+func envRef(v string) bool {
+	if !strings.HasPrefix(v, "$") {
+		return false
+	}
+	v = v[1:]
+	if strings.HasPrefix(v, "{") && strings.HasSuffix(v, "}") {
+		v = v[1 : len(v)-1]
+	}
+	for i, r := range v {
+		if !(r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || i > 0 && r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return v != ""
+}
+
+// redactValue replaces the value of a secret-named thing. An empty value or
+// an environment reference stays; a URL keeps its host and path.
+func redactValue(v string) string {
+	if v == "" || envRef(v) {
+		return v
+	}
+	if u := redactURL(v); u != "" {
+		return u
+	}
+	return redacted
+}
+
+// redactPairs replaces every value in an &-separated k=v list; a bare key
+// stays bare.
+func redactPairs(s string) string {
+	parts := strings.Split(s, "&")
+	for i, p := range parts {
+		if k, v, ok := strings.Cut(p, "="); ok {
+			parts[i] = k + "=" + redactValue(v)
+		}
+	}
+	return strings.Join(parts, "&")
+}
+
+// redactURL returns s with its user info, every query value and every
+// k=v value in its fragment replaced, or "" when s is not a URL with a
+// scheme and a host. A secret carried in the path is not found.
+func redactURL(s string) string {
+	u, err := url.Parse(s)
+	if err != nil || u.Scheme == "" || u.Host == "" || strings.ContainsAny(s, " \t\n") {
+		return ""
+	}
+	if u.User != nil {
+		u.User = url.User(redacted)
+	}
+	if u.RawQuery != "" {
+		u.RawQuery = redactPairs(u.RawQuery)
+	}
+	if strings.Contains(u.Fragment, "=") {
+		u.Fragment = redactPairs(u.Fragment)
+	}
+	return u.String()
+}
+
+var (
+	pairRe   = regexp.MustCompile(`(?s)^(-{0,2}[A-Za-z_][A-Za-z0-9_.-]*)=(.*)$`)
+	headerRe = regexp.MustCompile(`(?s)^([A-Za-z][A-Za-z0-9_-]*)([ \t]*:[ \t]*)(.*)$`)
+)
+
+// redactArg redacts one string: a JSON object or array (values under
+// secret-named keys, and every string inside), a URL, a "Name: value"
+// header, a name=value pair (the value redacted when the name is a secret,
+// else read again), or words split at whitespace, read as an argument list.
+func redactArg(a string) string {
+	if t := strings.TrimSpace(a); strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[") {
+		var v any
+		if json.Unmarshal([]byte(t), &v) == nil {
+			var b strings.Builder
+			enc := json.NewEncoder(&b)
+			enc.SetEscapeHTML(false)
+			if enc.Encode(redactJSON(v)) == nil {
+				return strings.TrimSuffix(b.String(), "\n")
+			}
+		}
+	}
+	if u := redactURL(a); u != "" {
+		return u
+	}
+	if m := headerRe.FindStringSubmatch(a); m != nil {
+		if secretName(m[1]) {
+			return m[1] + m[2] + redactValue(m[3])
+		}
+		return m[1] + m[2] + redactArg(m[3])
+	}
+	if m := pairRe.FindStringSubmatch(a); m != nil {
+		if !secretName(m[1]) {
+			return m[1] + "=" + redactArg(m[2])
+		}
+		// TOKEN=abc npx server: the value ends at the first space.
+		if i := strings.IndexAny(m[2], " \t\n"); i >= 0 {
+			return m[1] + "=" + redactValue(m[2][:i]) + m[2][i:i+1] + redactArg(m[2][i+1:])
+		}
+		return m[1] + "=" + redactValue(m[2])
+	}
+	if f := strings.Fields(a); len(f) > 1 {
+		return strings.Join(redactArgs(f), " ")
+	}
+	return a
+}
+
+// redactJSON redacts values under secret-named keys and every string.
+func redactJSON(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, e := range x {
+			if s, ok := e.(string); ok && secretName(k) {
+				x[k] = redactValue(s)
+			} else if secretName(k) && e != nil {
+				x[k] = redacted
+			} else {
+				x[k] = redactJSON(e)
+			}
+		}
+	case []any:
+		for i, e := range x {
+			x[i] = redactJSON(e)
+		}
+	case string:
+		return redactArg(x)
+	}
+	return v
+}
+
+// redactArgs redacts an argument list: each argument through redactArg,
+// and the argument after a secret-named flag (--token x) through
+// redactValue. A short flag (-t x) is not recognised.
+func redactArgs(args []string) []string {
+	if args == nil {
+		return nil
+	}
+	out := make([]string, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if strings.HasPrefix(a, "--") && !strings.Contains(a, "=") && secretName(a) &&
+			i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			out[i] = a
+			i++
+			out[i] = redactValue(args[i])
+			continue
+		}
+		out[i] = redactArg(a)
+	}
+	return out
 }
 
 // readJSON decodes a JSON file into v; a missing file reports false.

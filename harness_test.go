@@ -258,6 +258,53 @@ func TestHarnessShowMCP(t *testing.T) {
 	}
 }
 
+func TestRedactArgs(t *testing.T) {
+	cases := []struct{ in, want []string }{
+		{[]string{"serve", "--token", "s3cret", "--api-key=s3cret", "--verbose", "-p", "8080"},
+			[]string{"serve", "--token", "REDACTED", "--api-key=REDACTED", "--verbose", "-p", "8080"}},
+		{[]string{"GITHUB_TOKEN=s3cret", "Authorization: Bearer s3cret", "--header", "X-Trace: on"},
+			[]string{"GITHUB_TOKEN=REDACTED", "Authorization: REDACTED", "--header", "X-Trace: on"}},
+		// mcp-remote's header forms, and a flag=value whose value is a pair
+		{[]string{"--header", "Authorization:Bearer s3cret", "--header=Authorization: Bearer s3cret==", "--env=GITHUB_TOKEN=s3cret", "x-api-key:s3cret"},
+			[]string{"--header", "Authorization:REDACTED", "--header=Authorization: REDACTED", "--env=GITHUB_TOKEN=REDACTED", "x-api-key:REDACTED"}},
+		// URLs: password, user-as-token, query, fragment; a bare query key stays bare
+		{[]string{"https://u:s3cret@h.example/sse?api_key=s3cret&x", "https://s3cret@github.com/x", "postgresql://s3cret@db/app",
+			"https://h.example/cb#access_token=s3cret", "https://h.example/doc#usage", "--url=https://h.example/?t=s3cret"},
+			[]string{"https://REDACTED@h.example/sse?api_key=REDACTED&x", "https://REDACTED@github.com/x", "postgresql://REDACTED@db/app",
+				"https://h.example/cb#access_token=REDACTED", "https://h.example/doc#usage", "--url=https://h.example/?t=REDACTED"}},
+		// JSON config args and shell strings
+		{[]string{"--config", `{"apiKey":"s3cret","debug":true,"url":"https://h.example/?k=s3cret"}`, "-c", "export TOKEN=s3cret && run", "-c", "TOKEN=s3cret npx foo --bar"},
+			[]string{"--config", `{"apiKey":"REDACTED","debug":true,"url":"https://h.example/?k=REDACTED"}`, "-c", "export TOKEN=REDACTED && run", "-c", "TOKEN=REDACTED npx foo --bar"}},
+		// a secret flag's URL keeps host and path; names that only contain a word stay
+		{[]string{"--auth-url", "https://idp.example/authorize?state=s3cret", "--no-auth", "server.js", "--author", "bob", "--keyfile", "./k.json", "--pat", "s3cret"},
+			[]string{"--auth-url", "https://idp.example/authorize?state=REDACTED", "--no-auth", "server.js", "--author", "bob", "--keyfile", "./k.json", "--pat", "REDACTED"}},
+		// env references and ordinary values stay
+		{[]string{"--token", "${GH_TOKEN}", "API_KEY=$KEY", "mcp/github:latest", `C:\tools\x.exe`},
+			[]string{"--token", "${GH_TOKEN}", "API_KEY=$KEY", "mcp/github:latest", `C:\tools\x.exe`}},
+	}
+	for _, c := range cases {
+		if got := redactArgs(c.in); !eq(got, c.want) {
+			t.Errorf("redactArgs\n got %q\nwant %q", got, c.want)
+		}
+	}
+	if got := redactArg("TOKEN=s3cret mcp-server"); got != "TOKEN=REDACTED mcp-server" {
+		t.Errorf("redactArg(command) = %q", got)
+	}
+}
+
+func TestHarnessShowMCPRedacts(t *testing.T) {
+	h, _ := harnessSandbox(t)
+	os.WriteFile(filepath.Join(h, ".claude.json"), []byte(`{"mcpServers":{
+		"gh":{"command":"GH_TOKEN=s3cret gh-mcp","args":["--token","s3cret"]},
+		"web":{"type":"http","url":"https://h.example/mcp?key=s3cret"}}}`), 0o644)
+	for _, args := range [][]string{{"mcp", "--json"}, {"mcp"}} {
+		out, code := quiet(t, func() int { return run(append([]string{"harness", "show"}, args...)) })
+		if code != 0 || strings.Contains(out, "s3cret") || !strings.Contains(out, "REDACTED") {
+			t.Fatalf("harness show %v exited %d:\n%s", args, code, out)
+		}
+	}
+}
+
 func TestFileLogAndShow(t *testing.T) {
 	_, proj := harnessSandbox(t)
 	f := filepath.Join(proj, "CLAUDE.md")

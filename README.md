@@ -227,7 +227,7 @@ commits say `session unknown`.
 
 | Command | Does |
 | --- | --- |
-| `kennel harness show <skills\|guidance\|permissions\|hooks\|mcp> [--scope global\|<dir>] [--harness claude\|codex\|pi] [--json]` | lists one section for one harness: a Project block for the folder's git root, then a Global block from the home its route picks |
+| `kennel harness show <skills\|guidance\|permissions\|hooks\|mcp> [--scope global\|<dir>] [--harness claude\|codex\|pi] [--json]` | lists one section for one harness: a Project block for the folder's git root, then a Global block from the home its route picks. `mcp` replaces secret-looking values in server commands, args and URLs (secret-named flags and variables, auth headers, URL user info, query values) with `REDACTED`; env and headers are left out |
 | `kennel file log <path> [--json]` | the commits that touched the file, from the vault's history when the file is in the vault, else from its git repository; `[]` when no repository tracks it or the repository has no commits |
 | `kennel file show <path>[@<rev>]` | the file's text at a commit |
 
