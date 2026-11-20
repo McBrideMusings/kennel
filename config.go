@@ -281,8 +281,8 @@ func loadConfig() (*Config, error) {
 		cfg.Tools[name] = t
 	}
 	for prof, homes := range raw.Profiles {
-		if prof == "" || strings.ContainsAny(prof, " \t") {
-			problems = append(problems, fmt.Sprintf("[profiles.%q] needs a name without spaces; routes rows are read by whitespace", prof))
+		if prof == "" || strings.ContainsAny(prof, " \t:,") {
+			problems = append(problems, fmt.Sprintf("[profiles.%q] needs a name without spaces, ':' or ','; routes rows are read by them", prof))
 		}
 		cfg.Profiles[prof], cfg.Shared[prof] = map[string]string{}, map[string][]string{}
 		for tool, pt := range homes {

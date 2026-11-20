@@ -27,7 +27,7 @@ func TestResolve(t *testing.T) {
 	}
 	os.MkdirAll(filepath.Join(h, "Workshop"), 0o755)
 
-	cfg := &Config{Profiles: map[string]map[string]string{"work": {}, "personal": {}}}
+	cfg := &Config{Profiles: map[string]map[string]string{"work": {}, "personal": {}}, Tools: map[string]*Tool{"claude": {}}}
 	lines := []routeLine{
 		{path: "~/Work", profile: "work"},
 		{path: "~/Work/repo/docs", profile: "personal", expires: "2000-01-01"},
@@ -43,7 +43,7 @@ func TestResolve(t *testing.T) {
 		filepath.Join(h, "elsewhere"):            "",
 	} {
 		os.MkdirAll(dir, 0o755)
-		if got := resolve(cfg, lines, dir); got != want {
+		if got := resolve(cfg, lines, dir)["claude"]; got != want {
 			t.Errorf("resolve(%s) = %q, want %q", strings.TrimPrefix(dir, h), got, want)
 		}
 	}
@@ -70,10 +70,10 @@ func TestRoutesFileRoundTrip(t *testing.T) {
 	}
 
 	lines, _ := readRoutes()
-	cfg := &Config{Profiles: map[string]map[string]string{"work": {}, "personal": {}}}
+	cfg := &Config{Profiles: map[string]map[string]string{"work": {}, "personal": {}}, Tools: map[string]*Tool{"claude": {}}}
 	spaced := filepath.Join(h, "my  docs", "sub")
 	os.MkdirAll(spaced, 0o755)
-	if p := resolve(cfg, lines, spaced); p != "personal" {
+	if p := resolve(cfg, lines, spaced)["claude"]; p != "personal" {
 		t.Errorf("resolve(~/my  docs/sub) = %q, want personal", p)
 	}
 }

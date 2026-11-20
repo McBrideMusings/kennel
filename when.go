@@ -9,122 +9,110 @@ import (
 )
 
 var (
-	literalDate = regexp.MustCompile(`^\d+-\d+-\d+$`)
-	relative    = regexp.MustCompile(`^(\d+) ?(d|w|m)(ay|eek|onth)?s?$`)
-	weekdays    = []time.Weekday{time.Monday, time.Tuesday, time.Wednesday, time.Thursday, time.Friday, time.Saturday, time.Sunday}
+	literalDate   = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+	durationToken = regexp.MustCompile(`(\d+)([a-z])`)
+	durationShape = regexp.MustCompile(`^(\d+[a-z])+$`)
 )
 
-const whenHelp = "today eod | tomorrow | 2d 3 days | 1w 2 weeks | 1m | wed monday | next fri | eow | weekend | eom | 2026-08-15"
+const whenHelp = "a duration, units y m w d h m s largest first (1d, 3h30m, 1w2d, 1y6m; a lone m is minutes), or a last day, 2026-08-15"
 
-// coming returns the next date falling on wd, counting from now, or now
-// itself when it already is wd.
-func coming(now time.Time, wd time.Weekday) time.Time {
-	return now.AddDate(0, 0, (int(wd)-int(now.Weekday())+7)%7)
-}
+// durationOrder ranks the units largest first; "mo" and "min" are the two
+// readings of m.
+var durationOrder = map[string]int{"y": 0, "mo": 1, "w": 2, "d": 3, "h": 4, "min": 5, "s": 6}
 
-// parseWhen turns an expiry phrase into the last day a route applies.
-func parseWhen(phrase string, now time.Time) (string, error) {
-	w := strings.Join(strings.Fields(strings.ToLower(phrase)), " ")
-	day := func(t time.Time) (string, error) { return t.Format("2006-01-02"), nil }
+// parseWhen turns a duration or a YYYY-MM-DD last day into the moment a
+// route stops applying.
+func parseWhen(phrase string, now time.Time) (time.Time, error) {
+	w := strings.Join(strings.Fields(strings.ToLower(phrase)), "")
 	if w == "" {
-		return "", fmt.Errorf("empty date")
+		return time.Time{}, fmt.Errorf("empty duration")
 	}
 	if literalDate.MatchString(w) {
-		t, err := time.Parse("2006-1-2", w)
-		if err != nil {
-			return "", fmt.Errorf("not a real date: %s", w)
-		}
-		return day(t)
+		return parseLastDay(w, now)
 	}
-	if m := relative.FindStringSubmatch(w); m != nil {
-		n, _ := strconv.Atoi(m[1])
-		switch m[2] {
-		case "d":
-			return day(now.AddDate(0, 0, n))
-		case "w":
-			return day(now.AddDate(0, 0, 7*n))
-		default:
-			return day(now.AddDate(0, n, 0))
-		}
-	}
-	switch w {
-	case "today", "eod", "tonight":
-		return day(now)
-	case "tmw", "tmr", "tmrw", "tom":
-		return day(now.AddDate(0, 0, 1))
-	case "eow":
-		return day(coming(now, time.Friday))
-	case "weekend":
-		return day(coming(now, time.Sunday))
-	case "eom":
-		return day(time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, now.Location()))
-	}
-	if editDistance(w, "tomorrow") <= 2 {
-		return day(now.AddDate(0, 0, 1))
-	}
-
-	// `next wed` is the one after the coming Wednesday; `this wed` the coming one.
-	weeks := 0
-	switch {
-	case strings.HasPrefix(w, "next "):
-		weeks, w = 1, strings.TrimPrefix(w, "next ")
-	case strings.HasPrefix(w, "this "):
-		w = strings.TrimPrefix(w, "this ")
-	case strings.HasPrefix(w, "on "):
-		w = strings.TrimPrefix(w, "on ")
-	}
-
-	// Tightest match first: abbreviation, full name, prefix, then typos.
-	tests := []func(name string) bool{
-		func(name string) bool { return w == name[:3] },
-		func(name string) bool { return w == name },
-		func(name string) bool { return len(w) >= 3 && strings.HasPrefix(name, w) },
-		func(name string) bool { return editDistance(w, name) <= 1 },
-		func(name string) bool { return editDistance(w, name) <= 2 },
-	}
-	for _, test := range tests {
-		var hits []time.Weekday
-		for _, wd := range weekdays {
-			if test(strings.ToLower(wd.String())) {
-				hits = append(hits, wd)
-			}
-		}
-		if len(hits) == 1 {
-			return day(coming(now, hits[0]).AddDate(0, 0, 7*weeks))
-		}
-		if len(hits) > 1 {
-			names := make([]string, len(hits))
-			for i, h := range hits {
-				names[i] = strings.ToLower(h.String())
-			}
-			return "", fmt.Errorf("ambiguous day %q — could be %s", w, strings.Join(names, ", "))
-		}
-	}
-	return "", fmt.Errorf("don't understand %q (try: tomorrow, 3d, 2w, wed, next fri, eow, eom, 2026-08-15)", w)
+	return parseDuration(w, now)
 }
 
-// editDistance counts the insertions, deletions, substitutions and adjacent
-// swaps that turn a into b.
-func editDistance(a, b string) int {
-	d := make([][]int, len(a)+1)
-	for i := range d {
-		d[i] = make([]int, len(b)+1)
-		d[i][0] = i
+// parseLastDay reads YYYY-MM-DD as the end of that day in local time.
+func parseLastDay(w string, now time.Time) (time.Time, error) {
+	d, err := time.ParseInLocation("2006-01-02", w, now.Location())
+	if err != nil {
+		return time.Time{}, fmt.Errorf("not a real date: %s", w)
 	}
-	for j := range d[0] {
-		d[0][j] = j
+	end := d.AddDate(0, 0, 1)
+	if !end.After(now) {
+		return time.Time{}, fmt.Errorf("%s has already ended", w)
 	}
-	for i := 1; i <= len(a); i++ {
-		for j := 1; j <= len(b); j++ {
-			cost := 1
-			if a[i-1] == b[j-1] {
-				cost = 0
+	return end, nil
+}
+
+// parseDuration reads NyNmNwNdNhNmNs with any unit left out. An m is months
+// when a w, d, h or another m follows it, or when it ends the duration right
+// after a y; otherwise it is minutes, so a lone 5m is five minutes.
+func parseDuration(w string, now time.Time) (time.Time, error) {
+	bad := fmt.Errorf("don't understand %q: want %s", w, whenHelp)
+	if !durationShape.MatchString(w) {
+		return time.Time{}, bad
+	}
+	toks := durationToken.FindAllStringSubmatch(w, -1)
+	units := make([]string, len(toks))
+	for i, t := range toks {
+		units[i] = t[2]
+	}
+	var y, mo, d int
+	var clock time.Duration
+	last := -1
+	for i, t := range toks {
+		n, err := strconv.Atoi(t[1])
+		if err != nil || n > 1_000_000 {
+			return time.Time{}, bad
+		}
+		u := units[i]
+		if u == "m" {
+			next, prev := "", ""
+			if i+1 < len(units) {
+				next = units[i+1]
 			}
-			d[i][j] = min(d[i-1][j]+1, d[i][j-1]+1, d[i-1][j-1]+cost)
-			if i > 1 && j > 1 && a[i-1] == b[j-2] && a[i-2] == b[j-1] {
-				d[i][j] = min(d[i][j], d[i-2][j-2]+1)
+			if i > 0 {
+				prev = units[i-1]
+			}
+			if strings.Contains("wdhm", next) && next != "" || next == "" && prev == "y" {
+				u = "mo"
+			} else {
+				u = "min"
 			}
 		}
+		rank, ok := durationOrder[u]
+		if !ok {
+			return time.Time{}, fmt.Errorf("unknown unit %q in %q: want %s", t[2], w, whenHelp)
+		}
+		if rank <= last {
+			return time.Time{}, fmt.Errorf("%q: give each unit once, largest first (y m w d h m s)", w)
+		}
+		last = rank
+		switch u {
+		case "y":
+			y = n
+		case "mo":
+			mo = n
+		case "w":
+			d += 7 * n
+		case "d":
+			d += n
+		case "h":
+			clock += time.Duration(n) * time.Hour
+		case "min":
+			clock += time.Duration(n) * time.Minute
+		case "s":
+			clock += time.Duration(n) * time.Second
+		}
 	}
-	return d[len(a)][len(b)]
+	end := now.AddDate(y, mo, d).Add(clock)
+	if end.UTC().Year() > 9999 {
+		return time.Time{}, fmt.Errorf("%q ends after the year 9999", w)
+	}
+	if !end.After(now) {
+		return time.Time{}, fmt.Errorf("%q is no time at all", w)
+	}
+	return end, nil
 }

@@ -3,7 +3,7 @@
 Go CLI that routes directories to coding-agent profiles; see README.md for the model.
 
 - One package, `main`. `config.go` loads and validates config.toml, `routes.go` owns the
-  routes file and resolution, `when.go` parses expiry phrases, `link.go` checks and creates
+  routes file and resolution, `when.go` parses expiry durations and last days, `link.go` checks and creates
   profile symlinks and share links, `record.go` keeps the links record of share links kennel
   made, `shareedit.go` holds `share add` and `share rm`, which
   rewrite config.toml through `tomledit.go`'s line editors (one share array, the `[copied]` table), `hooks.go` generates Codex and pi hook files from Claude's hook list,

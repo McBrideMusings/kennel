@@ -34,7 +34,9 @@ pi     = "~/.pi-work"
 EOF
 
 check "route add" "$BIN" route add "$S/Work" work --permanent
-check "route add with date" "$BIN" route add "$S/Work/repo/sub" personal next wed
+check "route add with a duration" "$BIN" route add "$S/Work/repo/sub" personal 3d
+check "route add with a last day" "$BIN" route add "$S/Work/dated" personal 2999-01-01
+check "a phrase is refused" bash -c "! '$BIN' route add '$S/Work/x' personal next wed"
 check "unknown profile refused" bash -c "! '$BIN' route add '$S/Work' nope"
 printf '~/old personal 2000-01-01\n' >> "$KENNEL_CONFIG_DIR/routes"
 git -C "$S/Work/repo" init -q && git -C "$S/Work/repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
@@ -42,6 +44,11 @@ git -C "$S/Work/repo" worktree add -q "$S/wt"
 check "worktree follows its repo" bash -c "cd '$S/wt' && '$BIN' which | grep -q '^profile	work'"
 check "env exports work homes" bash -c "cd '$S/Work' && '$BIN' env | grep -q \"CODEX_HOME='$S/.codex-work'\""
 check "env exports pi's built-in variable" bash -c "cd '$S/Work' && '$BIN' env | grep -q \"PI_CODING_AGENT_DIR='$S/.pi-work'\""
+check "use moves one tool" bash -c "cd '$S/Work/repo' && '$BIN' use personal codex 2h >/dev/null && '$BIN' env | grep -q '^unset CODEX_HOME' && '$BIN' env | grep -q \"CLAUDE_CONFIG_DIR='$S/.claude-work'\""
+check "use wrote a tool row on the repo root" grep -Eq "Work/repo personal:codex 20[0-9-]{8}T[0-9:]{8}Z$" "$KENNEL_CONFIG_DIR/routes"
+check "which names each tool's profile" bash -c "cd '$S/wt' && '$BIN' which | grep -q '^profile	claude=work codex=personal pi=work$'"
+check "route list shows the tool" bash -c "'$BIN' route list | grep -q 'personal (codex) \[until '"
+check "route rm clears it" bash -c "'$BIN' route rm '$S/Work/repo' >/dev/null && cd '$S/Work/repo' && '$BIN' env | grep -q \"CODEX_HOME='$S/.codex-work'\""
 check "expired route pruned" bash -c "! grep -q '~/old' '$KENNEL_CONFIG_DIR/routes'"
 check "outside any route unsets" bash -c "cd '$S' && '$BIN' env | grep -q '^unset CLAUDE_CONFIG_DIR'"
 check "outside any route unsets pi" bash -c "cd '$S' && '$BIN' env | grep -q '^unset PI_CODING_AGENT_DIR'"

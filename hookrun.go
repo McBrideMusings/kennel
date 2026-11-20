@@ -76,7 +76,7 @@ func hookEnv(cfg *Config, target, cwd string) []string {
 	if t, ok := cfg.Tools["claude"]; ok {
 		h := t.Base
 		if lines, err := readRoutes(); err == nil {
-			if p := cfg.Profiles[resolve(cfg, lines, cwd)]["claude"]; p != "" {
+			if p := cfg.Profiles[resolve(cfg, lines, cwd)["claude"]]["claude"]; p != "" {
 				h = p
 			}
 		}

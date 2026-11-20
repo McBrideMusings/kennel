@@ -271,29 +271,40 @@ To add it to Claude Desktop, put this in
 
 ## Routes
 
-`~/.config/kennel/routes`, one `<path> <profile> [YYYY-MM-DD]` per line:
+`~/.config/kennel/routes`, one `<path> <profile>[:tool,tool] [expiry]` per line:
 
-- The longest matching path wins.
+- The longest matching path wins, tool by tool. A row naming tools (`work:codex`) routes
+  only those; a row naming none routes every tool.
+- Of rows at one path, the last wins. `kennel use` appends, so a short switch sits on top
+  of the row under it, and when it expires the tools it moved fall back to that row.
 - Inside a git repo or linked worktree, kennel matches the main repo's path rather than
   the current directory, so a worktree anywhere on disk follows its repo's route.
-- A row whose date has passed is deleted on the next `cd`.
-- A row naming a profile the config lacks is ignored, and `route list` and `doctor` flag it.
+- The expiry is a UTC time (`2026-11-21T19:30:00Z`), which kennel writes, or a last day
+  (`2026-11-21`), which lasts through that day. A row past it is deleted on the next `cd`.
+- A row naming a profile the config lacks is ignored, and `route list` and `doctor` flag it;
+  so is a tool the config lacks.
 
 ```sh
+kennel use work                 # this repo (or folder), every tool, for 1d
+kennel use personal codex 3h    # only Codex, for three hours; Claude keeps work
+kennel use work 2026-12-05      # through the end of that day
 kennel route add ~/Work work --permanent
-kennel route add ~/Projects/client-x work next fri   # expires; default is tomorrow
+kennel route add ~/Projects/client-x work claude 1w
 kennel route rm ~/Projects/client-x
 kennel route list
 ```
 
-`when` accepts `today`, `tomorrow`, `3d`, `2 weeks`, `1m`, `wed`, `next fri`, `eow`,
-`weekend`, `eom` or `2026-08-15`. Weekday names survive one or two typos.
+`when` is a duration, units `y m w d h m s` largest first with any left out (`1d`, `3h30m`,
+`1w2d`, `1y6m`, `90s`), or a last day, `2026-08-15`. An `m` is months when a `w`, `d`, `h`
+or `m` follows it or it ends the duration right after a `y`; otherwise minutes, so a lone
+`5m` is five minutes. The default is `1d`. A new row replaces an older one at its path only
+when it routes every tool the older one does for at least as long.
 
 ## Checking it
 
 | Command | Prints |
 | --- | --- |
-| `kennel which [dir]` | the profile a directory gets and each tool's home |
+| `kennel which [dir]` | the profile a directory gets (each tool's, when they differ) and each tool's home |
 | `kennel homes <tool>` | each profile's home for one tool, tab-separated, for scripts |
 | `kennel doctor` | config, every shared symlink, every share link, whether opted-in hook files are current, ignored routes, and whether this shell's variables match the route for `$PWD`; exits 1 on any problem |
 

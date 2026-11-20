@@ -196,7 +196,7 @@ func resolveScope(cfg *Config, arg, harness string) (*harnessScope, error) {
 				md, sc.Root = matchFromCommon(f[0], abs), f[1]
 			}
 		}
-		sc.Profile = resolveMatch(cfg, lines, md)
+		sc.Profile = resolveMatch(cfg, lines, md, harness)[harness]
 	}
 	sc.Home = cfg.Profiles[sc.Profile][harness]
 	if sc.Home == "" {

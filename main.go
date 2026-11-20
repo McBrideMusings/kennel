@@ -8,15 +8,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 )
 
 const usage = `kennel — route directories to coding-agent profiles
 
+  kennel use <profile> [tool...] [when]    route this folder's repo, or the folder, for 1d unless told
   kennel route list                        routes and profiles
-  kennel route add <path> <profile> [when] [--permanent]
-                                           route a directory (expires tomorrow unless told)
+  kennel route add <path> <profile> [tool...] [when] [--permanent]
+                                           route a directory (expires in 1d unless told)
   kennel route rm <path>                   delete a directory's route
   kennel route prune                       delete expired routes now
   kennel which [dir]                       the profile and homes a directory gets
@@ -145,6 +147,8 @@ func run(args []string) int {
 		return cmdWhich(cfg, dir)
 	case "route":
 		return cmdRoute(cfg, args[1:])
+	case "use":
+		return cmdUse(cfg, args[1:])
 	case "homes":
 		if len(args) != 2 {
 			return failf("usage: kennel homes <tool>")
@@ -251,10 +255,10 @@ func cmdEnv(cfg *Config, fish bool) int {
 	if err != nil {
 		return failf("%v", err)
 	}
-	profile := resolve(cfg, lines, dir)
+	routed := resolve(cfg, lines, dir)
 	for _, name := range cfg.toolNames() {
 		env := cfg.Tools[name].Env
-		h := cfg.Profiles[profile][name]
+		h := cfg.Profiles[routed[name]][name]
 		switch {
 		case fish && h != "":
 			fmt.Printf("set -gx %s %s\n", env, fishQuote(h))
@@ -278,21 +282,39 @@ func cmdWhich(cfg *Config, dir string) int {
 	if err != nil {
 		return failf("%v", err)
 	}
-	profile := resolve(cfg, lines, abs)
-	shown := profile
-	if shown == "" {
-		shown = "(no route)"
-	}
-	fmt.Printf("profile\t%s\n", shown)
+	routed := resolve(cfg, lines, abs)
+	fmt.Printf("profile\t%s\n", routedProfiles(cfg, routed))
 	for _, name := range cfg.toolNames() {
 		t := cfg.Tools[name]
-		if h := cfg.Profiles[profile][name]; h != "" {
+		if h := cfg.Profiles[routed[name]][name]; h != "" {
 			fmt.Printf("%s\t%s=%s\n", name, t.Env, h)
 		} else {
 			fmt.Printf("%s\t%s unset (default home)\n", name, t.Env)
 		}
 	}
 	return 0
+}
+
+// routedProfiles names the one profile every tool gets, or each tool's when
+// they differ.
+func routedProfiles(cfg *Config, routed map[string]string) string {
+	shown := func(p string) string {
+		if p == "" {
+			return "(no route)"
+		}
+		return p
+	}
+	names := cfg.toolNames()
+	var parts []string
+	same := true
+	for _, name := range names {
+		parts = append(parts, name+"="+shown(routed[name]))
+		same = same && routed[name] == routed[names[0]]
+	}
+	if same && len(names) > 0 {
+		return shown(routed[names[0]])
+	}
+	return strings.Join(parts, " ")
 }
 
 // cmdHomes prints `<profile>\t<home>` for every profile, for scripts that
@@ -349,7 +371,7 @@ func routeList(cfg *Config) int {
 	if err != nil {
 		return failf("%v", err)
 	}
-	day := today()
+	now := time.Now()
 	fmt.Printf("Routes (%s):\n", tilde(routesPath()))
 	any := false
 	for _, l := range lines {
@@ -362,16 +384,24 @@ func routeList(cfg *Config) int {
 		any = true
 		status := ""
 		if l.expires != "" {
-			if l.expired(day) {
-				status = " [EXPIRED " + l.expires + " — dropped on the next cd]"
+			t, _ := expiryTime(l.expires)
+			if l.expired(now) {
+				status = " [EXPIRED " + t.Local().Format("2006-01-02 15:04") + " — dropped on the next cd]"
 			} else {
-				status = " [until " + l.expires + "]"
+				status = " [until " + t.Local().Format("2006-01-02 15:04") + "]"
 			}
 		}
 		if _, ok := cfg.Profiles[l.profile]; !ok {
 			status = " [IGNORED — no such profile]" + status
 		}
-		fmt.Printf("  %-45s → %s%s\n", l.path, l.profile, status)
+		if unknown := unknownTools(cfg, l); len(unknown) > 0 {
+			status = " [IGNORED for " + strings.Join(unknown, ", ") + " — no such tool]" + status
+		}
+		shown := l.profile
+		if len(l.tools) > 0 {
+			shown += " (" + strings.Join(l.tools, ", ") + ")"
+		}
+		fmt.Printf("  %-45s → %s%s\n", l.path, shown, status)
 	}
 	if !any {
 		fmt.Println("  (none)")
@@ -392,6 +422,30 @@ func routeList(cfg *Config) int {
 	return 0
 }
 
+// unknownTools lists the tools a row names that config.toml has no block for.
+func unknownTools(cfg *Config, l routeLine) []string {
+	var out []string
+	for _, t := range l.tools {
+		if _, ok := cfg.Tools[t]; !ok {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// cmdUse routes the folder kennel would match from here: the main repo's
+// root inside a repo or linked worktree, else the folder itself.
+func cmdUse(cfg *Config, args []string) int {
+	if len(args) < 1 {
+		return failf("usage: kennel use <profile> [tool...] [when]")
+	}
+	dir, err := os.Getwd()
+	if err != nil {
+		return failf("%v", err)
+	}
+	return addRoute(cfg, tilde(matchDir(dir)), args[0], args[1:], false)
+}
+
 func routeAdd(cfg *Config, args []string) int {
 	permanent := false
 	var pos []string
@@ -403,27 +457,54 @@ func routeAdd(cfg *Config, args []string) int {
 		}
 	}
 	if len(pos) < 2 {
-		return failf("usage: kennel route add <path> <profile> [when] [--permanent]")
+		return failf("usage: kennel route add <path> <profile> [tool...] [when] [--permanent]")
 	}
 	path, err := normalizeRoutePath(pos[0])
 	if err != nil {
 		return failf("%v", err)
 	}
-	profile := pos[1]
+	return addRoute(cfg, path, pos[1], pos[2:], permanent)
+}
+
+// addRoute writes one row: rest is the tools it routes, then the expiry. Each
+// row already at path gives up the tools the new row takes, so a narrower
+// switch leaves the other tools where they were.
+func addRoute(cfg *Config, path, profile string, rest []string, permanent bool) int {
 	if _, ok := cfg.Profiles[profile]; !ok {
 		return failf("no [profiles.%s] in %s (profiles: %s)", profile, cfg.Path, strings.Join(cfg.profileNames(), ", "))
 	}
+	var tools []string
+	for len(rest) > 0 {
+		if _, ok := cfg.Tools[rest[0]]; !ok {
+			break
+		}
+		if !slices.Contains(tools, rest[0]) {
+			tools = append(tools, rest[0])
+		}
+		rest = rest[1:]
+	}
+	now := time.Now()
 	expires := ""
 	switch {
-	case permanent && len(pos) > 2:
-		return failf("give a date or --permanent, not both")
+	case permanent && len(rest) > 0:
+		return failf("give an expiry or --permanent, not both")
 	case permanent:
-	case len(pos) == 2:
-		expires = time.Now().AddDate(0, 0, 1).Format("2006-01-02")
 	default:
-		if expires, err = parseWhen(strings.Join(pos[2:], " "), time.Now()); err != nil {
+		when := "1d"
+		if len(rest) > 0 {
+			when = strings.Join(rest, " ")
+		}
+		t, err := parseWhen(when, now)
+		if err != nil {
+			if len(rest) == 1 {
+				return failf("%v (tools: %s)", err, strings.Join(cfg.toolNames(), ", "))
+			}
 			return failf("%v", err)
 		}
+		expires = t.UTC().Format(time.RFC3339)
+	}
+	if len(tools) == len(cfg.toolNames()) {
+		tools = nil
 	}
 
 	lines, err := readRoutes()
@@ -435,14 +516,16 @@ func routeAdd(cfg *Config, args []string) int {
 			lines = append(lines, routeLine{raw: h})
 		}
 	}
-	// One row per path: two rows for one path resolve by file order, so a
-	// stale row would outrank the new one.
-	entry := routeLine{path: path, profile: profile, expires: expires}
+	// Rows at one path stack and the newest wins tool by tool, so a short
+	// switch falls back to the row under it when it expires. A row the new one
+	// covers for every tool it routes, for as long as it lasts, can never win
+	// again and goes.
+	entry := routeLine{path: path, profile: profile, tools: tools, expires: expires}
 	var kept []routeLine
-	var old *routeLine
 	for _, l := range lines {
-		if l.isRoute() && l.path == path {
-			old = &l
+		if l.isRoute() && samePath(l.path, path) && shadows(cfg, entry, l) {
+			logf("route replaced: %s -> %s", l.format(), entry.format())
+			fmt.Printf("Replaced: %s\n", l.format())
 			continue
 		}
 		kept = append(kept, l)
@@ -450,14 +533,32 @@ func routeAdd(cfg *Config, args []string) int {
 	if err := writeRoutes(append(kept, entry)); err != nil {
 		return failf("%v", err)
 	}
-	if old != nil {
-		logf("route replaced: %s -> %s", old.format(), entry.format())
-		fmt.Printf("Replaced: %s\n    with: %s\n", old.format(), entry.format())
-	} else {
-		logf("route added: %s", entry.format())
-		fmt.Printf("Added: %s\n", entry.format())
+	logf("route added: %s", entry.format())
+	until := ""
+	if t, ok := expiryTime(expires); ok {
+		until = " (until " + t.Local().Format("2006-01-02 15:04") + ")"
 	}
+	fmt.Printf("Added: %s%s\n", entry.format(), until)
 	return 0
+}
+
+// shadows reports whether row n, added after old at the same path, wins every
+// tool old routes for all of old's life.
+func shadows(cfg *Config, n, old routeLine) bool {
+	for _, t := range old.effectiveTools(cfg) {
+		if !n.routes(t) {
+			return false
+		}
+	}
+	if n.expires == "" {
+		return true
+	}
+	if old.expires == "" {
+		return false
+	}
+	nt, _ := expiryTime(n.expires)
+	ot, _ := expiryTime(old.expires)
+	return !ot.After(nt)
 }
 
 func routeRemove(p string) int {
@@ -473,7 +574,7 @@ func routeRemove(p string) int {
 	removed := 0
 	for _, l := range lines {
 		// Compare the path field only, so `rm work` can't match a profile name.
-		if l.isRoute() && l.path == path {
+		if l.isRoute() && samePath(l.path, path) {
 			logf("route removed: %s", l.format())
 			fmt.Printf("Removed: %s\n", l.format())
 			removed++
@@ -569,15 +670,18 @@ func cmdDoctor(cfg *Config) int {
 			if _, ok := cfg.Profiles[l.profile]; !ok {
 				note(false, "%s names profile %q, which config.toml does not define; the row is ignored", l.path, l.profile)
 			}
+			for _, t := range unknownTools(cfg, l) {
+				note(false, "%s names tool %q, which config.toml has no [tools.%s] for; that part is ignored", l.path, t, t)
+			}
 		}
 	}
 
 	fmt.Println("This shell")
 	dir, _ := os.Getwd()
-	profile := resolve(cfg, lines, dir)
+	routed := resolve(cfg, lines, dir)
 	before := problems
 	for _, name := range cfg.toolNames() {
-		env, want := cfg.Tools[name].Env, cfg.Profiles[profile][name]
+		env, want := cfg.Tools[name].Env, cfg.Profiles[routed[name]][name]
 		got, set := os.LookupEnv(env)
 		shown := "unset"
 		if set {
